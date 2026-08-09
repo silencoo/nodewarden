@@ -348,7 +348,7 @@ const es: Record<string, string> = {
   "txt_backup_error_s3_delete_failed_status": "Eliminación S3 fallida: HTTP {status}.",
   "txt_backup_error_s3_download_failed_status": "Descarga S3 fallida: HTTP {status}.",
   "txt_backup_error_s3_endpoint_required": "El endpoint S3 es obligatorio.",
-  "txt_backup_error_s3_endpoint_protocol": "El endpoint S3 debe empezar por http:// o https://.",
+  "txt_backup_error_s3_endpoint_protocol": "El endpoint S3 debe usar https://.",
   "txt_backup_error_s3_existence_check_failed_status": "Comprobación de existencia S3 fallida: HTTP {status}.",
   "txt_backup_error_s3_listing_failed_status": "Listado S3 fallido: HTTP {status}.",
   "txt_backup_error_s3_secret_key_required": "La clave secreta S3 es obligatoria.",
@@ -373,7 +373,7 @@ const es: Record<string, string> = {
   "txt_backup_error_webdav_path_too_deep": "La ruta remota WebDAV es demasiado profunda para procesar adjuntos por lotes de forma segura.",
   "txt_backup_error_webdav_upload_failed_status": "Subida WebDAV fallida: HTTP {status}.",
   "txt_backup_error_webdav_url_required": "La URL del servidor WebDAV es obligatoria.",
-  "txt_backup_error_webdav_url_protocol": "La URL WebDAV debe empezar por http:// o https://.",
+  "txt_backup_error_webdav_url_protocol": "La URL WebDAV debe usar https://.",
   "txt_backup_error_webdav_username_required": "El usuario WebDAV es obligatorio.",
   "txt_backup_destination": "Destino de copia",
   "txt_backup_protocol_webdav": "WebDAV",
@@ -1463,5 +1463,21 @@ Object.assign(es, {
 Object.assign(es, { "txt_password_security_last_checked": "Última comprobación: {value}" });
 Object.assign(es, { "txt_no_password_risks_in_filter": "No hay riesgos de contraseña en esta categoría" });
 Object.assign(es, { "txt_password_security_show_all": "Show all", "txt_password_security_hide_all": "Hide all", "txt_password_security_jump": "Go to item", "txt_password_security_exposed_short": "Exposed {count} times", "txt_password_security_weak_short": "Weak password", "txt_password_security_reused_short": "Reused" });
+
+Object.assign(es, {
+  "txt_backup_encrypt_export": "Cifrar el ZIP exportado",
+  "txt_backup_encrypt_remote": "Cifrar la copia antes de subirla",
+  "txt_backup_encryption_password": "Contraseña de cifrado de la copia",
+  "txt_backup_encryption_password_confirm": "Confirmar contraseña de la copia",
+  "txt_backup_encryption_password_help": "Usa cifrado ZIP AES-256. Guarda esta contraseña fuera del servidor; no se puede recuperar.",
+  "txt_backup_remote_encryption_help": "Los nuevos archivos remotos se cifran antes de subirlos. Los existentes requieren la contraseña usada al crearlos.",
+  "txt_backup_remote_encryption_disabled_warning": "El proveedor de almacenamiento podrá leer la copia. Activa el cifrado antes de usar este destino.",
+  "txt_backup_encryption_password_invalid": "Usa una contraseña de copia de entre 12 y 1024 caracteres.",
+  "txt_backup_encryption_password_mismatch": "Las contraseñas de la copia no coinciden.",
+  "txt_backup_encryption_mixed_archive": "Esta copia mezcla archivos cifrados y sin cifrar y no se puede restaurar de forma segura.",
+  "txt_backup_encryption_password_required": "Introduce la contraseña del archivo de copia.",
+  "txt_backup_file_password": "Contraseña del archivo de copia",
+  "txt_backup_file_password_help": "Es la contraseña usada para cifrar el ZIP, no tu contraseña maestra."
+});
 
 export default es;

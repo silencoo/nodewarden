@@ -1,4 +1,6 @@
 import type { Env, User } from '../types';
+import { readBoundedResponseText } from './bounded-response';
+import { rejectRedirectResponse } from './redirect-response';
 
 const YUBIKEY_PUBLIC_ID_LENGTH = 12;
 const YUBIKEY_MIN_OTP_LENGTH = 32;
@@ -6,6 +8,8 @@ const YUBIKEY_MAX_OTP_LENGTH = 48;
 const YUBICO_DEFAULT_VALIDATION_URL = 'https://api.yubico.com/wsapi/2.0/verify';
 const YUBICO_GET_API_KEY_URL = 'https://upgrade.yubico.com/getapikey/';
 const MODHEX_RE = /^[cbdefghijklnrtuv]+$/;
+const YUBICO_REQUEST_TIMEOUT_MS = 5000;
+const YUBICO_RESPONSE_MAX_BYTES = 64 * 1024;
 
 export interface YubicoApiCredentials {
   clientId: string;
@@ -112,6 +116,32 @@ function validationUrls(env: Env): string[] {
   return configured.length > 0 ? configured : [YUBICO_DEFAULT_VALIDATION_URL];
 }
 
+async function fetchYubicoEndpoint(input: string | URL, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), YUBICO_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(input, {
+      ...init,
+      redirect: 'manual',
+      signal: controller.signal,
+    });
+    return await rejectRedirectResponse(response, 'Yubico endpoint');
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function buildYubicoValidationUrl(baseUrl: string, params: URLSearchParams): URL | null {
+  try {
+    const url = new URL(String(baseUrl || '').trim());
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) return null;
+    for (const [key, value] of params) url.searchParams.set(key, value);
+    return url;
+  } catch {
+    return null;
+  }
+}
+
 export async function requestYubicoApiCredentials(email: string, otpInput: string): Promise<YubicoApiCredentials | null> {
   const otp = normalizeYubiKeyOtp(otpInput);
   if (!isYubiKeyOtp(otp)) return null;
@@ -121,17 +151,21 @@ export async function requestYubicoApiCredentials(email: string, otpInput: strin
   body.set('otp', otp);
   body.set('terms_conditions', 'consented');
 
-  const response = await fetch(YUBICO_GET_API_KEY_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-  });
-  if (!response.ok) return null;
+  try {
+    const response = await fetchYubicoEndpoint(YUBICO_GET_API_KEY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+    if (!response.ok) return null;
 
-  const html = await response.text();
-  const clientId = /Client ID:<\/th>\s*<td><b>(\d+)<\/b>/i.exec(html)?.[1] || '';
-  const secretKey = /Secret key:<\/th>\s*<td><code>([^<]+)<\/code>/i.exec(html)?.[1] || '';
-  return clientId ? { clientId, secretKey } : null;
+    const html = await readBoundedResponseText(response, YUBICO_RESPONSE_MAX_BYTES, 'Yubico response');
+    const clientId = /Client ID:<\/th>\s*<td><b>(\d+)<\/b>/i.exec(html)?.[1] || '';
+    const secretKey = /Secret key:<\/th>\s*<td><code>([^<]+)<\/code>/i.exec(html)?.[1] || '';
+    return clientId && secretKey ? { clientId, secretKey } : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function verifyYubicoOtp(
@@ -160,9 +194,15 @@ export async function verifyYubicoOtp(
 
   for (const baseUrl of validationUrls(env)) {
     try {
-      const response = await fetch(`${baseUrl}?${params.toString()}`, { method: 'GET' });
+      const validationUrl = buildYubicoValidationUrl(baseUrl, params);
+      if (!validationUrl) continue;
+      const response = await fetchYubicoEndpoint(validationUrl, { method: 'GET' });
       if (!response.ok) continue;
-      const parsed = parseYubicoResponse(await response.text());
+      const parsed = parseYubicoResponse(await readBoundedResponseText(
+        response,
+        YUBICO_RESPONSE_MAX_BYTES,
+        'Yubico validation response'
+      ));
       if (parsed.otp !== otp || parsed.nonce !== nonce || parsed.status !== 'OK') continue;
       if (!parsed.h) continue;
       const signedParams = new URLSearchParams();

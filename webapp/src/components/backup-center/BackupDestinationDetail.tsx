@@ -34,11 +34,13 @@ interface BackupDestinationDetailProps {
   downloadingRemotePercent: number | null;
   restoringRemotePath: string;
   deletingRemotePath: string;
+  encryptionPasswordConfirmation: string;
   onSaveSettings: () => void;
   onToggleSchedule: () => void;
   onRunRemoteBackup: () => void;
   onPromptDeleteDestination: () => void;
   onUpdateDestination: (mutator: (destination: BackupDestinationRecord) => BackupDestinationRecord) => void;
+  onEncryptionPasswordConfirmationChange: (value: string) => void;
   onRefreshRemoteBrowser: () => void;
   onShowRemoteBrowserPath: (path: string) => void;
   onDownloadRemoteBackup: (path: string) => void;
@@ -396,6 +398,61 @@ export function BackupDestinationDetail(props: BackupDestinationDetailProps) {
                 includeAttachments: checked,
               }))}
             />
+          </div>
+
+          <div className="backup-encryption-panel">
+            <label className="backup-option-label">
+              <input
+                type="checkbox"
+                checked={props.selectedDestination.encryption.enabled}
+                disabled={props.loadingSettings || props.disableWhileBusy}
+                onInput={(event) => props.onUpdateDestination((destination) => ({
+                  ...destination,
+                  encryption: {
+                    ...destination.encryption,
+                    enabled: (event.currentTarget as HTMLInputElement).checked,
+                  },
+                }))}
+              />
+              <span>{t('txt_backup_encrypt_remote')}</span>
+            </label>
+            {props.selectedDestination.encryption.enabled ? (
+              <>
+                <div className="field-grid">
+                  <label className="field">
+                    <span>{t('txt_backup_encryption_password')}</span>
+                    <input
+                      className="input"
+                      type="password"
+                      autoComplete="new-password"
+                      value={props.selectedDestination.encryption.password}
+                      disabled={props.loadingSettings || props.disableWhileBusy}
+                      onInput={(event) => props.onUpdateDestination((destination) => ({
+                        ...destination,
+                        encryption: {
+                          ...destination.encryption,
+                          password: (event.currentTarget as HTMLInputElement).value,
+                        },
+                      }))}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>{t('txt_backup_encryption_password_confirm')}</span>
+                    <input
+                      className="input"
+                      type="password"
+                      autoComplete="new-password"
+                      value={props.encryptionPasswordConfirmation}
+                      disabled={props.loadingSettings || props.disableWhileBusy}
+                      onInput={(event) => props.onEncryptionPasswordConfirmationChange((event.currentTarget as HTMLInputElement).value)}
+                    />
+                  </label>
+                </div>
+                <div className="field-help">{t('txt_backup_remote_encryption_help')}</div>
+              </>
+            ) : (
+              <div className="field-help">{t('txt_backup_remote_encryption_disabled_warning')}</div>
+            )}
           </div>
 
           {props.selectedDestination.type === 'webdav' ? (

@@ -351,7 +351,7 @@ const zhTW: Record<string, string> = {
   "txt_backup_error_s3_delete_failed_status": "S3 刪除失敗：HTTP {status}。",
   "txt_backup_error_s3_download_failed_status": "S3 下載失敗：HTTP {status}。",
   "txt_backup_error_s3_endpoint_required": "請填寫 S3 端點 URL。",
-  "txt_backup_error_s3_endpoint_protocol": "S3 端點 URL 必須以 http:// 或 https:// 開頭。",
+  "txt_backup_error_s3_endpoint_protocol": "S3 端點 URL 必須使用 https://。",
   "txt_backup_error_s3_existence_check_failed_status": "S3 文件存在性檢查失敗：HTTP {status}。",
   "txt_backup_error_s3_listing_failed_status": "S3 列表讀取失敗：HTTP {status}。",
   "txt_backup_error_s3_secret_key_required": "請填寫 S3 存取密碼。",
@@ -376,7 +376,7 @@ const zhTW: Record<string, string> = {
   "txt_backup_error_webdav_path_too_deep": "WebDAV 遠端備份路徑過深，無法安全分批處理附件。",
   "txt_backup_error_webdav_upload_failed_status": "WebDAV 上傳失敗：HTTP {status}。",
   "txt_backup_error_webdav_url_required": "請填寫 WebDAV 服務地址。",
-  "txt_backup_error_webdav_url_protocol": "WebDAV 服務地址必須以 http:// 或 https:// 開頭。",
+  "txt_backup_error_webdav_url_protocol": "WebDAV 服務地址必須使用 https://。",
   "txt_backup_error_webdav_username_required": "請填寫 WebDAV 用戶名。",
   "txt_backup_destination": "備份地點",
   "txt_backup_protocol_webdav": "WebDAV",
@@ -1492,6 +1492,22 @@ Object.assign(zhTW, {
   "txt_check_password_breach": "檢查外洩",
   "txt_password_not_found_in_breaches": "未在外洩密碼庫中發現",
   "txt_password_security_check_failed": "無法完成外洩檢查。"
+});
+
+Object.assign(zhTW, {
+  "txt_backup_encrypt_export": "加密匯出的 ZIP",
+  "txt_backup_encrypt_remote": "上傳到遠端前加密備份",
+  "txt_backup_encryption_password": "備份加密密碼",
+  "txt_backup_encryption_password_confirm": "確認備份密碼",
+  "txt_backup_encryption_password_help": "使用 AES-256 ZIP 加密。請在伺服器之外妥善保存此密碼，遺失後無法找回。",
+  "txt_backup_remote_encryption_help": "新備份會先加密再上傳；既有備份仍需使用建立時所用的密碼。",
+  "txt_backup_remote_encryption_disabled_warning": "遠端儲存提供者將能讀取備份內容。使用此目標前建議啟用加密。",
+  "txt_backup_encryption_password_invalid": "備份密碼長度須為 12 到 1024 個字元。",
+  "txt_backup_encryption_password_mismatch": "兩次輸入的備份密碼不一致。",
+  "txt_backup_encryption_mixed_archive": "此備份同時包含加密與未加密檔案，無法安全還原。",
+  "txt_backup_encryption_password_required": "請輸入備份檔案密碼。",
+  "txt_backup_file_password": "備份檔案密碼",
+  "txt_backup_file_password_help": "這是加密 ZIP 時使用的密碼，不是你的主密碼。"
 });
 
 export default zhTW;

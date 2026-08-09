@@ -19,6 +19,8 @@ const SIGNALR_UPDATE_TYPE_SYNC_SEND_DELETE = 14;
 const SIGNALR_UPDATE_TYPE_AUTH_REQUEST = 15;
 const SIGNALR_UPDATE_TYPE_AUTH_REQUEST_RESPONSE = 16;
 const SIGNALR_UPDATE_TYPE_BACKUP_RESTORE_PROGRESS = 102;
+const CONNECTION_TOKEN_STATE_KEY = 'notification.connection.tokens.v1';
+const MAX_RECENT_CONNECTION_TOKENS = 256;
 
 type HubProtocol = 'json' | 'messagepack';
 type HubKind = 'user' | 'anonymous-auth-request';
@@ -267,6 +269,8 @@ export class NotificationsHub extends DurableObject<Env> {
     const requestUserId = String(url.searchParams.get('nw_uid') || '').trim();
     const requestDeviceIdentifier = String(url.searchParams.get('nw_did') || '').trim() || null;
     const requestAuthRequestId = String(url.searchParams.get('nw_auth_request_id') || '').trim() || null;
+    const connectionTokenId = String(url.searchParams.get('nw_connect_jti') || '').trim() || null;
+    const connectionTokenExpiresAt = Number(url.searchParams.get('nw_connect_exp') || 0);
     const isAnonymousAuthRequestHub = url.pathname === '/notifications/anonymous-hub';
 
     if (!isAnonymousAuthRequestHub && !requestUserId) {
@@ -274,6 +278,10 @@ export class NotificationsHub extends DurableObject<Env> {
     }
     if (isAnonymousAuthRequestHub && !requestAuthRequestId) {
       return new Response('Unauthorized', { status: 401 });
+    }
+    if (!isAnonymousAuthRequestHub && connectionTokenId) {
+      const consumed = await this.consumeConnectionToken(connectionTokenId, connectionTokenExpiresAt);
+      if (!consumed) return new Response('Unauthorized', { status: 401 });
     }
 
     const pair = new WebSocketPair();
@@ -299,6 +307,23 @@ export class NotificationsHub extends DurableObject<Env> {
       status: 101,
       webSocket: client,
     });
+  }
+
+  private async consumeConnectionToken(tokenId: string, expiresAt: number): Promise<boolean> {
+    const now = Math.floor(Date.now() / 1000);
+    if (!tokenId || !Number.isFinite(expiresAt) || expiresAt < now || expiresAt > now + 120) {
+      return false;
+    }
+    const stored = await this.ctx.storage.get<Record<string, number>>(CONNECTION_TOKEN_STATE_KEY) || {};
+    const activeEntries = Object.entries(stored)
+      .filter(([, expiry]) => Number.isFinite(expiry) && expiry >= now)
+      .sort(([, a], [, b]) => a - b)
+      .slice(-(MAX_RECENT_CONNECTION_TOKENS - 1));
+    const active = Object.fromEntries(activeEntries);
+    if (active[tokenId]) return false;
+    active[tokenId] = expiresAt;
+    await this.ctx.storage.put(CONNECTION_TOKEN_STATE_KEY, active);
+    return true;
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer | ArrayBufferView): Promise<void> {

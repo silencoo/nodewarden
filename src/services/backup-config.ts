@@ -11,6 +11,7 @@ import {
   BACKUP_DEFAULT_START_TIME,
   BACKUP_DEFAULT_TIMEZONE,
   type BackupDestinationConfig,
+  type BackupEncryptionConfig,
   type BackupDestinationRecord,
   type BackupDestinationType,
   type BackupRuntimeState,
@@ -24,6 +25,7 @@ import {
   createDefaultBackupScheduleConfig,
   createDefaultBackupSettings as createSharedDefaultBackupSettings,
 } from '../../shared/backup-schema';
+import { validateBackupEncryptionPassword } from '../../shared/backup-encryption';
 
 export const BACKUP_SETTINGS_CONFIG_KEY = 'backup.settings.v1';
 const BACKUP_RUNTIME_CONFIG_KEY = 'backup.runtime.v1';
@@ -33,6 +35,7 @@ const MAX_BACKUP_DESTINATIONS = 24;
 
 export type {
   BackupDestinationConfig,
+  BackupEncryptionConfig,
   BackupDestinationRecord,
   BackupDestinationType,
   BackupRuntimeState,
@@ -212,8 +215,8 @@ export function normalizeBackupEndpointUrl(value: string, label: string): string
   } catch {
     throw new Error(`${label} must be a valid URL`);
   }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error(`${label} must start with http:// or https://`);
+  if (parsed.protocol !== 'https:') {
+    throw new Error(`${label} must use https://`);
   }
   if (parsed.username || parsed.password) {
     throw new Error(`${label} must not include credentials`);
@@ -364,6 +367,31 @@ function withPreservedDestinationSecret(
   return source;
 }
 
+function normalizeBackupEncryption(
+  value: unknown,
+  previous: BackupDestinationRecord | undefined,
+  allowIncomplete: boolean
+): BackupEncryptionConfig {
+  const source = isPlainObject(value) ? value : {};
+  const hasExplicitValue = isPlainObject(value);
+  const enabled = hasExplicitValue
+    ? !!source.enabled
+    : previous?.encryption?.enabled ?? false;
+  const submittedPassword = source.password;
+  const previousPassword = previous?.encryption?.password || '';
+  const password = shouldPreserveBackupSecret(submittedPassword)
+    ? previousPassword
+    : String(submittedPassword ?? '');
+
+  if (password) {
+    validateBackupEncryptionPassword(password);
+  } else if (enabled && !allowIncomplete) {
+    validateBackupEncryptionPassword(password);
+  }
+
+  return { enabled, password };
+}
+
 function normalizeRuntime(value: unknown): BackupRuntimeState {
   const source = isPlainObject(value) ? value : {};
   const asIso = (input: unknown): string | null => {
@@ -439,6 +467,7 @@ function normalizeDestinationRecord(
     withPreservedDestinationSecret(type, input.destination, previous),
     !schedule.enabled
   );
+  const encryption = normalizeBackupEncryption(input.encryption, previous, !schedule.enabled);
 
   return {
     id,
@@ -447,6 +476,7 @@ function normalizeDestinationRecord(
     includeAttachments: typeof input.includeAttachments === 'boolean'
       ? input.includeAttachments
       : previous?.includeAttachments ?? false,
+    encryption,
     destination,
     schedule,
     runtime,
@@ -470,6 +500,10 @@ function parseLegacyBackupSettings(rawValue: Record<string, unknown>, fallbackTi
     name: defaultDestinationName(destinationType, 1),
     type: destinationType,
     includeAttachments: false,
+    encryption: {
+      enabled: false,
+      password: '',
+    },
     destination: normalizeDestination(destinationType, rawValue.destination),
     schedule: {
       enabled: !!rawValue.enabled,
@@ -627,6 +661,10 @@ export function redactBackupSettingsSecrets(settings: BackupSettings): BackupSet
         const config = destination.destination as S3BackupDestination;
         return {
           ...destination,
+          encryption: {
+            ...destination.encryption,
+            password: destination.encryption.password ? REDACTED_BACKUP_SECRET : '',
+          },
           destination: {
             ...config,
             secretAccessKey: config.secretAccessKey ? REDACTED_BACKUP_SECRET : '',
@@ -636,6 +674,10 @@ export function redactBackupSettingsSecrets(settings: BackupSettings): BackupSet
       const config = destination.destination as WebDavBackupDestination;
       return {
         ...destination,
+        encryption: {
+          ...destination.encryption,
+          password: destination.encryption.password ? REDACTED_BACKUP_SECRET : '',
+        },
         destination: {
           ...config,
           password: config.password ? REDACTED_BACKUP_SECRET : '',

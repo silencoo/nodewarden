@@ -1,4 +1,5 @@
 import { LIMITS } from './config/limits';
+import { rejectRedirectResponse } from './utils/redirect-response';
 import {
   handleAccessSend,
   handleAccessSendFile,
@@ -130,15 +131,16 @@ async function fetchIconSource(source: { url: string; headers?: HeadersInit }): 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ICON_UPSTREAM_TIMEOUT_MS);
   try {
-    return await fetch(source.url, {
+    const response = await fetch(source.url, {
       headers: source.headers,
-      redirect: 'follow',
+      redirect: 'manual',
       signal: controller.signal,
       cf: {
         cacheEverything: true,
         cacheTtl: LIMITS.cache.iconTtlSeconds,
       },
     } as RequestInit & { cf: { cacheEverything: boolean; cacheTtl: number } });
+    return await rejectRedirectResponse(response, 'Website icon endpoint');
   } finally {
     clearTimeout(timeout);
   }

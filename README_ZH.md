@@ -43,8 +43,8 @@
 | 2FA 恢复码 | ✅ | ✅ | 一次性恢复码用于禁用 2FA |
 | 实时推送同步 | ✅ | ✅ | 网页端、浏览器扩展、电脑端和手机端实时同步 |
 | 附件 / Send| ✅ | ✅ | Cloudflare R2 或 KV |
-| 导入 / 导出 | ✅ | ✅ | 支持 Bitwarden JSON / CSV / **ZIP 导入（包括附件）** |
-| **云端备份中心** | ❌ | ✅ | **支持 WebDAV / S3 定时增量备份** |
+| 导入 / 导出 | ✅ | ✅ | 支持 Bitwarden JSON / CSV / **独立密码加密 ZIP（包括附件）** |
+| **云端备份中心** | ❌ | ✅ | **支持加密的 WebDAV / S3 定时增量备份** |
 | 设备管理 | ✅ | ✅ | **删除设备、撤销信任、永久信任** |
 | 登录请求 | ✅ | ✅ | **多端免密登录审批、跨设备解锁请求** |
 | **多用户使用** | ✅ | ✅ | 支持邀请码注册 |
@@ -72,13 +72,17 @@
 3. 选择 Continue with GitHub 并选择你的仓库
 4. 构建命令填 `npm run build`，部署命令填 `npm run deploy`
 - 如果你打算用 KV 模式，把部署命令改成 `npm run deploy:kv`
-5. 等部署完成后，打开生成的 Workers 域名
+5. 部署完成后，先保存部署命令打印的 Web Vault 私密入口，再把该路径拼到 Workers 域名后访问
 
 - Workers 默认域名在部分网络环境不可直连。如需自定义域名，到 [Workers 设置](https://dash.cloudflare.com/?to=/:account/workers/services/view/nodewarden/production/settings)里添加。
 
-- 页面提示缺少 `JWT_SECRET` 时，到 Workers 设置里添加 Secret。正式环境至少使用 32 个字符以上的随机字符串，不要使用临时值或示例值。
+- 页面提示缺少 `JWT_SECRET` 时，到 Workers 设置里添加 Secret。正式环境至少使用 32 个字符以上的随机字符串，不要使用临时值或示例值；请稳定保存并安全备份该 Secret，因为它同时用于签发会话和保护服务端托管的凭据密文。若有计划地轮换它，需要重新登录，并重新轮换或配置受影响的 API / 服务商凭据。
 
-- 如需隐藏 Web Vault，在 Workers 的“设置 → 变量和机密”中添加文本变量 `HIDE_WEB_VAULT`，值设为 `1`。启用后，服务器上的前端页面和静态资源统一返回 `404 Not Found`，Bitwarden 客户端所需的登录、同步、附件、图标、通知等服务端接口仍可使用；已经安装或缓存的 PWA 可以继续使用本地前端。删除该变量（或将值改为非 `1`）即可恢复服务器上的 Web Vault。
+- 如需彻底隐藏 Web Vault，在 Workers 的“设置 → 变量和机密”中添加文本变量 `HIDE_WEB_VAULT`，值设为 `1`。启用后，服务器上的前端页面和静态资源统一返回 `404 Not Found`，Bitwarden 客户端所需的登录、同步、附件、图标、通知等服务端接口仍可使用。删除该变量（或将值改为非 `1`）即可恢复带私密入口门禁的 Web Vault。
+
+- Web Vault 私密入口现在是强制项。常规的 `npm run deploy` 和 `npm run deploy:kv` 会检查 `WEB_VAULT_ENTRY_PATH` Secret；如果尚未设置，部署脚本会生成高熵随机路径、作为 Cloudflare Secret 保存，并在部署成功后只打印一次，请立即妥善保存。也可以通过部署环境变量 `WEB_VAULT_ENTRY_PATH` 自定义一个 16–128 字符的 URL 安全路径段。传统的 `/` 与 `/index.html` 始终只返回通用 `404`，即使浏览器已经通过门禁也不会显示登录页。访问 `https://你的域名/<私密路径>` 时，登录面板会保留在该私密 URL，并获得有效期 7 天、带签名且为 HttpOnly 的门禁 Cookie；没有该 Cookie 时，其他前端路由和静态资源同样返回 `404`，而 Bitwarden 兼容的登录/API 请求仍保持原有根目录端点。这个门禁用于降低自动扫描发现概率，不能替代账号认证、Cloudflare Access 或防火墙规则；`HIDE_WEB_VAULT=1` 的优先级更高。
+
+- 本地 ZIP 导出现在可以使用独立的备份密码。新建的 WebDAV/S3 目标默认也会先用 AES-256 加密 ZIP 条目再上传，网盘侧只保存加密后的归档。为了兼容已有恢复流程，旧目标会维持原有模式，需手动开启加密。备份密码请与网盘凭据分开保存，开启后务必实际测试一次恢复；远程备份地址必须使用 HTTPS。
 
 - 这套流程里，用户实际做的是把代码交给 Cloudflare 构建并部署。代码里的 `wrangler.toml` 或 `wrangler.kv.toml` 决定绑定名，Worker 第一次处理请求时会自动初始化 D1 schema，不需要用户上传 SQL。
 

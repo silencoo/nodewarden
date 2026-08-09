@@ -72,10 +72,6 @@
     @apply text-2xl;
   }
 
-  .standalone-title-row {
-    padding-inline: 68px;
-  }
-
   .standalone-footer {
     @apply text-xs leading-[1.4];
   }

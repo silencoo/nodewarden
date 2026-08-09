@@ -19,6 +19,7 @@ import {
 import { readResponseBytesWithProgress } from '../download';
 import { toBufferSource } from '../crypto';
 import { unzipSync, zipSync } from 'fflate';
+import { encryptBackupZipBytes } from '@shared/backup-encryption';
 
 export type {
   BackupDestinationConfig,
@@ -175,6 +176,18 @@ async function applyBackupFileIntegrityName(fileName: string, bytes: Uint8Array)
   return buildBackupFileName(timestamp, integrity.actualPrefix);
 }
 
+export async function encryptAdminBackupExportPayload(
+  payload: AdminBackupExportPayload,
+  password: string
+): Promise<AdminBackupExportPayload> {
+  const bytes = await encryptBackupZipBytes(payload.bytes, password);
+  return {
+    ...payload,
+    bytes,
+    fileName: await applyBackupFileIntegrityName(payload.fileName, bytes),
+  };
+}
+
 export async function exportAdminBackup(
   authedFetch: AuthedFetch,
   masterPasswordHash: string,
@@ -249,7 +262,7 @@ export async function buildCompleteAdminBackupExport(
   });
   for (const attachment of manifest.attachmentBlobs || []) {
     const bytes = await downloadAdminBackupAttachmentBlob(authedFetch, attachment.blobName, masterPasswordHash);
-    zipped[`attachments/${attachment.cipherId}/${attachment.attachmentId}.bin`] = bytes;
+    zipped[`attachments/${attachment.cipherId}/${attachment.attachmentId}.bin`] = Uint8Array.from(bytes);
   }
 
   await onProgress?.({
@@ -458,7 +471,8 @@ export async function importAdminBackup(
   masterPasswordHash: string,
   file: File,
   replaceExisting: boolean = false,
-  allowChecksumMismatch: boolean = false
+  allowChecksumMismatch: boolean = false,
+  backupPassword: string = ''
 ): Promise<AdminBackupImportResponse> {
   const formData = new FormData();
   formData.set('file', file, file.name || 'nodewarden_backup.zip');
@@ -468,6 +482,9 @@ export async function importAdminBackup(
   }
   if (allowChecksumMismatch) {
     formData.set('allowChecksumMismatch', '1');
+  }
+  if (backupPassword) {
+    formData.set('backupPassword', backupPassword);
   }
 
   const resp = await authedFetch('/api/admin/backup/import', {

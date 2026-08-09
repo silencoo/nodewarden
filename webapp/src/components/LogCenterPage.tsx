@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { ChevronLeft, ChevronRight, Database, RefreshCw, Save, Search, Server, Settings2, ShieldAlert, Smartphone, Trash2, UserRound } from 'lucide-preact';
 import LoadingState from '@/components/LoadingState';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import type { AuditLogFilters } from '@/lib/api/admin';
 import { t } from '@/lib/i18n';
 import type { AuditLogCategory, AuditLogEntry, AuditLogLevel, AuditLogListResult, AuditLogSettings } from '@/lib/types';
@@ -8,8 +9,8 @@ import type { AuditLogCategory, AuditLogEntry, AuditLogLevel, AuditLogListResult
 interface LogCenterPageProps {
   onLoadLogs: (filters: AuditLogFilters) => Promise<AuditLogListResult>;
   onLoadSettings: () => Promise<AuditLogSettings>;
-  onSaveSettings: (settings: AuditLogSettings) => Promise<AuditLogSettings>;
-  onClearLogs: () => Promise<number>;
+  onSaveSettings: (masterPassword: string, settings: AuditLogSettings) => Promise<AuditLogSettings>;
+  onClearLogs: (masterPassword: string) => Promise<number>;
   onNotify: (type: 'success' | 'error' | 'warning', text: string) => void;
   mobileLayout?: boolean;
   onMobileBack?: () => void;
@@ -203,6 +204,9 @@ export default function LogCenterPage(props: LogCenterPageProps) {
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  const [verificationAction, setVerificationAction] = useState<'save' | 'clear' | null>(null);
+  const [verificationPassword, setVerificationPassword] = useState('');
+  const [verificationError, setVerificationError] = useState('');
 
   const selectedLog = useMemo(() => logs.find((log) => log.id === selectedId) || logs[0] || null, [logs, selectedId]);
   const selectedMetadata = useMemo(() => selectedLog ? parseMetadata(selectedLog) : {}, [selectedLog]);
@@ -268,27 +272,30 @@ export default function LogCenterPage(props: LogCenterPageProps) {
     void load(0);
   }
 
-  async function saveSettings(): Promise<void> {
+  async function saveSettings(masterPassword: string): Promise<boolean> {
     setSettingsSaving(true);
     try {
-      const next = await props.onSaveSettings(settings);
+      const next = await props.onSaveSettings(masterPassword, settings);
       setSettings(next);
       setRetentionMode(inferRetentionMode(next));
       setSettingsOpen(false);
       setClearConfirmOpen(false);
       props.onNotify('success', t('txt_log_settings_saved'));
       void load(0);
+      return true;
     } catch {
       props.onNotify('error', t('txt_log_settings_save_failed'));
+      setVerificationError(t('txt_log_settings_save_failed'));
+      return false;
     } finally {
       setSettingsSaving(false);
     }
   }
 
-  async function clearLogs(): Promise<void> {
+  async function clearLogs(masterPassword: string): Promise<boolean> {
     setSettingsSaving(true);
     try {
-      await props.onClearLogs();
+      await props.onClearLogs(masterPassword);
       setLogs([]);
       setTotal(0);
       setHasMore(false);
@@ -298,10 +305,32 @@ export default function LogCenterPage(props: LogCenterPageProps) {
       setClearConfirmOpen(false);
       setSettingsOpen(false);
       props.onNotify('success', t('txt_logs_cleared'));
+      return true;
     } catch {
       props.onNotify('error', t('txt_clear_logs_failed'));
+      setVerificationError(t('txt_clear_logs_failed'));
+      return false;
     } finally {
       setSettingsSaving(false);
+    }
+  }
+
+  function requestSensitiveAction(action: 'save' | 'clear'): void {
+    setVerificationAction(action);
+    setVerificationPassword('');
+    setVerificationError('');
+  }
+
+  async function submitSensitiveAction(): Promise<void> {
+    if (!verificationAction || settingsSaving || !verificationPassword.trim()) return;
+    setVerificationError('');
+    const succeeded = verificationAction === 'save'
+      ? await saveSettings(verificationPassword)
+      : await clearLogs(verificationPassword);
+    if (succeeded) {
+      setVerificationAction(null);
+      setVerificationPassword('');
+      setVerificationError('');
     }
   }
 
@@ -445,7 +474,7 @@ export default function LogCenterPage(props: LogCenterPageProps) {
                   >
                     {RETENTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{t(option.labelKey)}</option>)}
                   </select>
-                  <button type="button" className="btn btn-primary log-settings-save-btn" disabled={settingsLoading || settingsSaving} onClick={() => void saveSettings()}>
+                  <button type="button" className="btn btn-primary log-settings-save-btn" disabled={settingsLoading || settingsSaving} onClick={() => requestSensitiveAction('save')}>
                     <Save size={14} className="btn-icon" />
                     {t('txt_save')}
                   </button>
@@ -467,7 +496,7 @@ export default function LogCenterPage(props: LogCenterPageProps) {
                   >
                     {MAX_ENTRY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{t(option.labelKey)}</option>)}
                   </select>
-                  <button type="button" className="btn btn-primary log-settings-save-btn" disabled={settingsLoading || settingsSaving} onClick={() => void saveSettings()}>
+                  <button type="button" className="btn btn-primary log-settings-save-btn" disabled={settingsLoading || settingsSaving} onClick={() => requestSensitiveAction('save')}>
                     <Save size={14} className="btn-icon" />
                     {t('txt_save')}
                   </button>
@@ -482,7 +511,7 @@ export default function LogCenterPage(props: LogCenterPageProps) {
                     <button type="button" className="btn btn-secondary" disabled={settingsSaving} onClick={() => setClearConfirmOpen(false)}>
                       {t('txt_cancel')}
                     </button>
-                    <button type="button" className="btn btn-danger" disabled={settingsSaving} onClick={() => void clearLogs()}>
+                    <button type="button" className="btn btn-danger" disabled={settingsSaving} onClick={() => requestSensitiveAction('clear')}>
                       <Trash2 size={14} className="btn-icon" />
                       {t('txt_clear_all_logs')}
                     </button>
@@ -582,6 +611,42 @@ export default function LogCenterPage(props: LogCenterPageProps) {
           )}
         </section>
       </div>
+
+      <ConfirmDialog
+        open={verificationAction !== null}
+        title={verificationAction === 'clear' ? t('txt_clear_all_logs') : t('txt_log_settings')}
+        message={t('txt_enter_master_password_to_continue')}
+        confirmText={verificationAction === 'clear' ? t('txt_clear_all_logs') : t('txt_save')}
+        cancelText={t('txt_cancel')}
+        danger={verificationAction === 'clear'}
+        confirmDisabled={settingsSaving || !verificationPassword.trim()}
+        cancelDisabled={settingsSaving}
+        onConfirm={() => void submitSensitiveAction()}
+        onCancel={() => {
+          if (settingsSaving) return;
+          setVerificationAction(null);
+          setVerificationPassword('');
+          setVerificationError('');
+        }}
+      >
+        <label className="field">
+          <span>{t('txt_master_password')}</span>
+          <input
+            className="input"
+            type="password"
+            autoComplete="current-password"
+            value={verificationPassword}
+            aria-invalid={verificationError ? 'true' : undefined}
+            aria-describedby={verificationError ? 'log-verification-error' : undefined}
+            disabled={settingsSaving}
+            onInput={(event) => {
+              setVerificationPassword((event.currentTarget as HTMLInputElement).value);
+              setVerificationError('');
+            }}
+          />
+        </label>
+        {verificationError && <div id="log-verification-error" className="local-error" role="alert">{verificationError}</div>}
+      </ConfirmDialog>
     </div>
   );
 }

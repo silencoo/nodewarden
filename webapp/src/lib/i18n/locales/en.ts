@@ -401,7 +401,7 @@ const en: Record<string, string> = {
   "txt_backup_error_s3_delete_failed_status": "S3 delete failed: HTTP {status}.",
   "txt_backup_error_s3_download_failed_status": "S3 download failed: HTTP {status}.",
   "txt_backup_error_s3_endpoint_required": "S3 endpoint is required.",
-  "txt_backup_error_s3_endpoint_protocol": "S3 endpoint must start with http:// or https://.",
+  "txt_backup_error_s3_endpoint_protocol": "S3 endpoint must use https://.",
   "txt_backup_error_s3_existence_check_failed_status": "S3 existence check failed: HTTP {status}.",
   "txt_backup_error_s3_listing_failed_status": "S3 listing failed: HTTP {status}.",
   "txt_backup_error_s3_secret_key_required": "S3 secret key is required.",
@@ -426,7 +426,7 @@ const en: Record<string, string> = {
   "txt_backup_error_webdav_path_too_deep": "WebDAV remote backup path is too deep for safe attachment batching.",
   "txt_backup_error_webdav_upload_failed_status": "WebDAV upload failed: HTTP {status}.",
   "txt_backup_error_webdav_url_required": "WebDAV server URL is required.",
-  "txt_backup_error_webdav_url_protocol": "WebDAV server URL must start with http:// or https://.",
+  "txt_backup_error_webdav_url_protocol": "WebDAV server URL must use https://.",
   "txt_backup_error_webdav_username_required": "WebDAV username is required.",
   "txt_backup_destination": "Backup Destination",
   "txt_backup_protocol_webdav": "WebDAV",
@@ -1542,6 +1542,22 @@ Object.assign(en, {
   "txt_check_password_breach": "Check breach",
   "txt_password_not_found_in_breaches": "Not found in the breach database",
   "txt_password_security_check_failed": "The breach check could not be completed."
+});
+
+Object.assign(en, {
+  "txt_backup_encrypt_export": "Encrypt exported ZIP",
+  "txt_backup_encrypt_remote": "Encrypt backup before remote upload",
+  "txt_backup_encryption_password": "Backup encryption password",
+  "txt_backup_encryption_password_confirm": "Confirm backup password",
+  "txt_backup_encryption_password_help": "Uses AES-256 ZIP encryption. Keep this password outside the server; it cannot be recovered.",
+  "txt_backup_remote_encryption_help": "New remote archives are encrypted before upload. Existing archives still require the password that was active when they were created.",
+  "txt_backup_remote_encryption_disabled_warning": "Remote archives will be readable by the storage provider. Enable encryption before using this destination.",
+  "txt_backup_encryption_password_invalid": "Use a backup password between 12 and 1024 characters.",
+  "txt_backup_encryption_password_mismatch": "The backup passwords do not match.",
+  "txt_backup_encryption_mixed_archive": "This backup mixes encrypted and unencrypted files and cannot be restored safely.",
+  "txt_backup_encryption_password_required": "Enter the backup file password.",
+  "txt_backup_file_password": "Backup file password",
+  "txt_backup_file_password_help": "This is the password used when the ZIP was encrypted, not your master password."
 });
 
 export default en;

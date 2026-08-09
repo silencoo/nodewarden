@@ -17,6 +17,9 @@
     // Attachment download token lifetime in seconds.
     // 附件下载令牌有效期（秒）。
     fileDownloadTokenTtlSeconds: 300,
+    // One-time WebSocket connection token lifetime in seconds.
+    // WebSocket 一次性连接令牌有效期（秒）。
+    notificationConnectionTokenTtlSeconds: 60,
     // Send access token lifetime in seconds.
     // Send 访问令牌有效期（秒）。
     sendAccessTokenTtlSeconds: 300,
@@ -40,6 +43,10 @@
     // Authenticated API request budget per user per minute (all reads & writes combined).
     // 认证 API 每用户每分钟请求配额（读写合计）。
     apiRequestsPerMinute: 200,
+    // Bulk-import traffic gets a separate bounded budget. This is intentionally
+    // higher than the normal API budget, but it is never an unlimited bypass.
+    // 批量导入使用独立的有界配额；该配额高于普通 API，但绝不会无限绕过限流。
+    importRequestsPerMinute: 600,
     // Public (unauthenticated) request budget per IP per minute.
     // 公开（未认证）接口每 IP 每分钟请求配额。
     publicRequestsPerMinute: 60,

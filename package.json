@@ -12,16 +12,20 @@
     "dev:demo": "vite --config webapp/vite.config.ts --mode demo --host 127.0.0.1 --port 5174",
     "build": "vite build --config webapp/vite.config.ts",
     "build:demo": "vite build --config webapp/vite.config.ts --mode demo && node scripts/pages-spa-redirects.cjs",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p webapp/tsconfig.json",
     "domains:sync": "node scripts/sync-global-domains.mjs",
     "i18n": "node scripts/i18n-validate.cjs",
     "i18n:validate": "node scripts/i18n-validate.cjs",
     "test:config-compatibility": "tsx --test scripts/config-compatibility.test.ts",
     "test:web-crypto": "tsx --test scripts/web-crypto-availability.test.ts",
+    "test:web-vault-visibility": "node --import tsx --test scripts/web-vault-visibility.test.ts",
+    "test": "node --import tsx --test scripts/*.test.ts scripts/*.test.mjs",
+    "check": "npm run typecheck && npm run i18n:validate && npm test && npm run build",
     "test:webauthn-mobile": "node --test scripts/webauthn-mobile-connector.test.mjs",
     "test:webauthn-connector": "node --test scripts/webauthn-connector.test.mjs && tsx --test scripts/webauthn-connector-headers.test.ts",
     "test:webauthn-connectors": "node --test scripts/webauthn-mobile-connector.test.mjs scripts/webauthn-connector.test.mjs && tsx --test scripts/webauthn-connector-headers.test.ts",
-    "deploy": "wrangler deploy",
-    "deploy:kv": "node scripts/ensure-kv.cjs && wrangler deploy -c wrangler.kv.toml",
+    "deploy": "node scripts/deploy-worker.mjs",
+    "deploy:kv": "node scripts/ensure-kv.cjs && node scripts/deploy-worker.mjs -c wrangler.kv.toml",
     "deploy:demo": "npm run build:demo && wrangler pages deploy dist --project-name nw-demo"
   },
   "keywords": [
@@ -35,6 +39,9 @@
     "bindings": {
       "JWT_SECRET": {
         "description": "Use a strong random string (32+ characters recommended)"
+      },
+      "WEB_VAULT_ENTRY_PATH": {
+        "description": "Mandatory private Web Vault path; npm run deploy generates it when missing"
       },
       "DB": {
         "description": "D1 database for storing vault data"

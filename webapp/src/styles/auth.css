@@ -483,13 +483,7 @@
 }
 
 .standalone-title-row {
-  @apply relative mb-1 flex min-h-9 items-center justify-center;
-  padding-inline: 84px;
-}
-
-.standalone-title-row > .network-status-badge {
-  @apply absolute right-0 top-1/2;
-  transform: translateY(-50%);
+  @apply mb-1 min-h-9;
 }
 
 .offline-mode-notice {

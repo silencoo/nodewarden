@@ -6,26 +6,28 @@
 
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'self';
-    script-src 'self' 'unsafe-inline';
+    script-src 'self';
     style-src 'self' 'unsafe-inline';
-    img-src 'self' data:;
-    connect-src 'self' https://api.pwnedpasswords.com;
-    font-src 'self';
+    img-src 'self' data: blob:;
+    connect-src 'self' wss: ws: https://api.pwnedpasswords.com;
+    font-src 'self' data:;
+    media-src 'self' blob:;
+    worker-src 'self' blob:;
+    manifest-src 'self';
+    object-src 'none';
+    frame-src 'none';
     form-action 'self';
-    base-uri 'self';
+    base-uri 'none';
   " />
 
-    <link rel="icon" type="image/svg+xml" href="/nodewarden-logo-bg.svg" />
-    <link rel="alternate icon" type="image/x-icon" href="/favicon.ico" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="theme-color" content="#0f172a" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="NodeWarden" />
+    <meta name="apple-mobile-web-app-title" content="Vault" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
-    <title>NodeWarden</title>
+    <title>Vault</title>
     <style>
       html,
       body,
@@ -60,12 +62,6 @@
         box-shadow: 0 20px 45px rgba(15, 23, 42, 0.10);
       }
 
-      .boot-logo {
-        width: 74px;
-        height: 58px;
-        object-fit: contain;
-      }
-
       .boot-line {
         width: 72%;
         height: 12px;
@@ -88,8 +84,7 @@
   <body>
     <div id="root">
       <div class="boot-screen">
-        <div class="boot-card" aria-label="Loading NodeWarden">
-          <img class="boot-logo" src="/nodewarden-logo.svg" alt="" />
+        <div class="boot-card" aria-label="Loading">
           <div class="boot-line"></div>
           <div class="boot-line short"></div>
         </div>

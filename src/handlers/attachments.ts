@@ -2,7 +2,12 @@ import { Env, Attachment, Cipher } from '../types';
 import { notifyUserCipherUpdate, notifyUserVaultSync } from '../durable/notifications-hub';
 import { StorageService } from '../services/storage';
 import { jsonResponse, errorResponse } from '../utils/response';
-import { buildDirectUploadUrl, getSafeJwtSecret, parseDirectUploadPayload } from '../utils/direct-upload';
+import {
+  buildDirectUploadUrl,
+  directUploadValidationMessage,
+  getSafeJwtSecret,
+  parseDirectUploadPayload,
+} from '../utils/direct-upload';
 import { generateUUID } from '../utils/uuid';
 import { sanitizeDownloadContentType } from '../utils/content-type';
 import {
@@ -59,7 +64,7 @@ function notifyCipherUpdateForRequest(
 function contentDispositionAttachment(fileName: string | null | undefined): string {
   const fallback = 'attachment';
   const value = String(fileName || fallback)
-    .replace(/[\r\n"]/g, '_')
+    .replace(/[\\\r\n"]/g, '_')
     .trim() || fallback;
   return `attachment; filename="${value}"`;
 }
@@ -138,6 +143,10 @@ async function processAttachmentUpload(
       },
     });
   } catch (error) {
+    const validationMessage = directUploadValidationMessage(error);
+    if (validationMessage) {
+      return errorResponse(validationMessage, validationMessage.toLowerCase().includes('too large') ? 413 : 400);
+    }
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes('KV object too large')) {
       return errorResponse(`File too large. Maximum size is ${Math.floor(maxFileSize / (1024 * 1024))}MB`, 413);

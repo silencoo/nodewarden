@@ -25,7 +25,7 @@ function canServeWithUnsafeJwtSecret(path: string, method: string): boolean {
   return false;
 }
 
-function isImportBypassRequest(request: Request, path: string, method: string): boolean {
+function isImportTrafficRequest(request: Request, path: string, method: string): boolean {
   if (request.headers.get('X-NodeWarden-Import') !== '1') return false;
 
   if (method === 'POST') {
@@ -186,25 +186,26 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       return errorResponse('Account is disabled', 403);
     }
 
-    if (!isImportBypassRequest(request, path, method)) {
-      const rateLimit = new RateLimitService(env.DB);
-      const rateLimitCheck = await rateLimit.consumeBudget(`${userId}:api`, LIMITS.rateLimit.apiRequestsPerMinute);
-      if (!rateLimitCheck.allowed) {
-        return new Response(
-          JSON.stringify({
-            error: 'Too many requests',
-            error_description: `Rate limit exceeded. Try again in ${rateLimitCheck.retryAfterSeconds} seconds.`,
-          }),
-          {
-            status: 429,
-            headers: {
-              'Content-Type': 'application/json',
-              'Retry-After': String(rateLimitCheck.retryAfterSeconds || 60),
-              'X-RateLimit-Remaining': '0',
-            },
-          }
-        );
-      }
+    const rateLimit = new RateLimitService(env.DB);
+    const importTraffic = isImportTrafficRequest(request, path, method);
+    const rateLimitCheck = importTraffic
+      ? await rateLimit.consumeStrictBudget(`${userId}:import`, LIMITS.rateLimit.importRequestsPerMinute)
+      : await rateLimit.consumeBudget(`${userId}:api`, LIMITS.rateLimit.apiRequestsPerMinute);
+    if (!rateLimitCheck.allowed) {
+      return new Response(
+        JSON.stringify({
+          error: 'Too many requests',
+          error_description: `Rate limit exceeded. Try again in ${rateLimitCheck.retryAfterSeconds} seconds.`,
+        }),
+        {
+          status: 429,
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': String(rateLimitCheck.retryAfterSeconds || 60),
+            'X-RateLimit-Remaining': '0',
+          },
+        }
+      );
     }
 
     const authenticatedResponse = await handleAuthenticatedRoute(request, env, userId, currentUser, path, method);

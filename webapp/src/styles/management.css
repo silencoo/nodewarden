@@ -34,6 +34,18 @@
   @apply grid gap-2.5;
 }
 
+.backup-encryption-fields {
+  @apply grid gap-2 rounded-xl border p-2.5;
+  border-color: var(--line);
+  background: var(--panel-soft);
+}
+
+.backup-encryption-panel {
+  @apply mb-3 grid gap-3 rounded-xl border p-3;
+  border-color: var(--line);
+  background: var(--panel-soft);
+}
+
 .backup-recommendations-disclosure {
   @apply mt-3;
 }
@@ -1845,7 +1857,7 @@
 }
 
 .authorized-devices-col-device {
-  width: 26%;
+  width: 23%;
 }
 
 .authorized-devices-col-type {
@@ -1857,15 +1869,15 @@
 }
 
 .authorized-devices-col-date {
-  width: 11%;
+  width: 10%;
 }
 
 .authorized-devices-col-trust {
-  width: 11%;
+  width: 12%;
 }
 
 .authorized-devices-col-actions {
-  width: 26%;
+  width: 28%;
 }
 
 .authorized-device-checkbox {
@@ -1874,19 +1886,42 @@
   accent-color: #2563eb;
 }
 
-.authorized-devices-table td:first-child {
+.authorized-devices-table td:nth-child(2) {
   overflow-wrap: anywhere;
 }
 
+.authorized-devices-toolbar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.authorized-devices-toolbar .btn.small {
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: 34px;
+  padding-block: 7px;
+  white-space: normal;
+}
+
 .authorized-devices-actions {
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
   gap: 6px;
 }
 
 .authorized-devices-actions .btn.small {
-  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  min-height: 34px;
   padding-inline: 8px;
-  white-space: nowrap;
+  padding-block: 6px;
+  line-height: 1.2;
+  white-space: normal;
 }
 
 .input.small {

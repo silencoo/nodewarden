@@ -37,7 +37,7 @@ import {
 function contentDispositionAttachment(fileName: string | null | undefined): string {
   const fallback = 'send-file';
   const value = String(fileName || fallback)
-    .replace(/[\r\n"]/g, '_')
+    .replace(/[\\\r\n"]/g, '_')
     .trim() || fallback;
   return `attachment; filename="${value}"`;
 }

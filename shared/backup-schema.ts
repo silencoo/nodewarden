@@ -57,11 +57,17 @@ export interface BackupScheduleConfig {
   retentionCount: number | null;
 }
 
+export interface BackupEncryptionConfig {
+  enabled: boolean;
+  password: string;
+}
+
 export interface BackupDestinationRecord {
   id: string;
   name: string;
   type: BackupDestinationType;
   includeAttachments: boolean;
+  encryption: BackupEncryptionConfig;
   destination: BackupDestinationConfig;
   schedule: BackupScheduleConfig;
   runtime: BackupRuntimeState;
@@ -142,6 +148,10 @@ export function createBackupDestinationRecord(
     name: options.name || createDefaultBackupDestinationName(type, index),
     type,
     includeAttachments: false,
+    encryption: {
+      enabled: true,
+      password: '',
+    },
     destination: createDefaultBackupDestinationConfig(type),
     schedule: createDefaultBackupScheduleConfig(options.timezone || BACKUP_DEFAULT_TIMEZONE),
     runtime: createDefaultBackupRuntimeState(),

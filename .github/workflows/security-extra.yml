@@ -4,11 +4,37 @@ on:
   push:
     branches:
       - "**"
+  pull_request:
 
 permissions:
   contents: read
 
 jobs:
+  quality-gate:
+    name: Typecheck, Tests, and Build
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run repository checks
+        run: npm run check
+
   gitleaks:
     name: Gitleaks Secret Scan
     runs-on: ubuntu-latest
@@ -48,8 +74,8 @@ jobs:
       upload-sarif: true
       fail-on-vuln: true
 
-  pnpm-audit:
-    name: pnpm audit
+  npm-audit:
+    name: npm audit
     runs-on: ubuntu-latest
 
     permissions:
@@ -66,17 +92,8 @@ jobs:
         with:
           node-version: 22
 
-      - name: Run pnpm audit
-        shell: bash
-        run: |
-          if [ ! -f pnpm-lock.yaml ]; then
-            echo "pnpm-lock.yaml not found, skip pnpm audit."
-            exit 0
-          fi
-
-          corepack enable
-          corepack prepare pnpm@10 --activate
-          pnpm audit --audit-level=high
+      - name: Run npm audit
+        run: npm audit --audit-level=high
 
   semgrep:
     name: Semgrep CE Scan
@@ -93,13 +110,17 @@ jobs:
           persist-credentials: false
 
       - name: Run Semgrep CE
+        id: semgrep_scan
         shell: bash
         run: |
+          set +e
           docker run --rm \
             -v "${PWD}:/src" \
             -w /src \
-            semgrep/semgrep:latest \
-            semgrep scan --config p/default --sarif --output semgrep.sarif . || true
+            semgrep/semgrep:1.172.0@sha256:65dcd4408adda7c183a6b4550cb1e9b19f7f627a6fbb7e0559bd466bedc44d7b \
+            semgrep scan --config p/default --error --sarif --output semgrep.sarif .
+          scan_status=$?
+          set -e
 
           if [ ! -f semgrep.sarif ]; then
             cat > semgrep.sarif <<'EOF'
@@ -121,12 +142,20 @@ jobs:
           }
           EOF
           fi
+          echo "exit_code=${scan_status}" >> "$GITHUB_OUTPUT"
 
       - name: Upload Semgrep SARIF
+        if: always()
         uses: github/codeql-action/upload-sarif@411bbbe57033eedfc1a82d68c01345aa96c737d7
         with:
           sarif_file: semgrep.sarif
           category: semgrep
+
+      - name: Enforce Semgrep result
+        if: always() && steps.semgrep_scan.outputs.exit_code != '0'
+        env:
+          SEMGREP_EXIT_CODE: ${{ steps.semgrep_scan.outputs.exit_code }}
+        run: exit "$SEMGREP_EXIT_CODE"
 
   actionlint:
     name: GitHub Actions Syntax Scan
@@ -144,10 +173,12 @@ jobs:
       - name: Run actionlint
         shell: bash
         run: |
-          docker run --rm \
-            -v "${PWD}:/repo" \
-            -w /repo \
-            rhysd/actionlint:latest
+          curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+            --output actionlint.tar.gz \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz" | sha256sum --check --strict
+          tar -xzf actionlint.tar.gz actionlint
+          ./actionlint
 
   zizmor:
     name: GitHub Actions Security Scan

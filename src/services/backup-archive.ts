@@ -2,7 +2,8 @@ import { zipSync, unzipSync, type UnzipFileInfo } from 'fflate';
 import type { Env } from '../types';
 import { APP_VERSION } from '../../shared/app-version';
 import { BACKUP_SETTINGS_CONFIG_KEY } from './backup-config';
-import { YUBICO_BOOTSTRAP_CLAIM_CONFIG_KEY } from './yubico-config';
+import { YUBICO_BOOTSTRAP_CLAIM_CONFIG_KEY, isYubicoCredentialConfigKey } from './yubico-config';
+import { isPushCredentialConfigKey } from './push-relay';
 import { exportPortableBackupSettingsEnvelope } from './backup-settings-crypto';
 import {
   getAttachmentObjectKey,
@@ -113,7 +114,13 @@ function sanitizeConfigRowsForExport(rows: SqlRow[]): SqlRow[] {
   const sanitized: SqlRow[] = [];
   for (const row of rows) {
     const key = String(row.key || '').trim();
-    if (!key || key === BACKUP_RUNNER_LOCK_CONFIG_KEY || key === YUBICO_BOOTSTRAP_CLAIM_CONFIG_KEY) continue;
+    if (
+      !key
+      || key === BACKUP_RUNNER_LOCK_CONFIG_KEY
+      || key === YUBICO_BOOTSTRAP_CLAIM_CONFIG_KEY
+      || isYubicoCredentialConfigKey(key)
+      || isPushCredentialConfigKey(key)
+    ) continue;
 
     if (key === BACKUP_SETTINGS_CONFIG_KEY) {
       const portableOnly = exportPortableBackupSettingsEnvelope(typeof row.value === 'string' ? row.value : null);
@@ -181,6 +188,25 @@ export async function inspectBackupArchiveFileNameChecksum(
 export async function verifyBackupArchiveFileNameChecksum(bytes: Uint8Array, fileName: string): Promise<boolean> {
   const result = await inspectBackupArchiveFileNameChecksum(bytes, fileName);
   return result.matches;
+}
+
+export async function applyBackupArchiveFileNameChecksum(bytes: Uint8Array, fileName: string): Promise<string> {
+  const normalized = String(fileName || '').trim();
+  const match = normalized.match(/^(nodewarden_backup_\d{8}_\d{6})(?:_[0-9a-f]{5})?\.zip$/i);
+  if (!match) return normalized || 'nodewarden_backup.zip';
+  const checksumPrefix = (await sha256Hex(bytes)).slice(0, BACKUP_FILE_HASH_PREFIX_LENGTH);
+  return `${match[1]}_${checksumPrefix}.zip`;
+}
+
+export async function replaceBackupArchiveBundleBytes(
+  archive: BackupArchiveBundle,
+  bytes: Uint8Array
+): Promise<BackupArchiveBundle> {
+  return {
+    ...archive,
+    bytes,
+    fileName: await applyBackupArchiveFileNameChecksum(bytes, archive.fileName),
+  };
 }
 
 function validateArchiveSize(bytes: Uint8Array): void {

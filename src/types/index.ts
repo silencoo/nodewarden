@@ -8,6 +8,9 @@ export interface Env {
   };
   // Set to "1" to return 404 for the Web Vault while keeping client APIs available.
   HIDE_WEB_VAULT?: string;
+  // Mandatory high-entropy path segment that must be visited before Web Vault assets are served.
+  // Production deployment generates and stores one when it is missing.
+  WEB_VAULT_ENTRY_PATH?: string;
   // Prefer R2 when available. Optional to support KV-only deployments.
   ATTACHMENTS?: R2Bucket;
   // Optional fallback for attachment/send file storage (no credit card required).

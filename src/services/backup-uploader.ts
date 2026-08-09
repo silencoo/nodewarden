@@ -5,6 +5,17 @@ import {
   WebDavBackupDestination,
   normalizeBackupEndpointUrl,
 } from './backup-config';
+import { LIMITS } from '../config/limits';
+import { readBoundedResponseBytes, readBoundedResponseText } from '../utils/bounded-response';
+import { rejectRedirectResponse } from '../utils/redirect-response';
+
+const MAX_REMOTE_BACKUP_DOWNLOAD_BYTES = Math.max(
+  LIMITS.attachment.maxFileSizeBytes,
+  LIMITS.send.maxFileSizeBytes
+);
+const MAX_REMOTE_LIST_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_REMOTE_LIST_ITEMS = 10_000;
+const MAX_REMOTE_S3_LIST_PAGES = 20;
 
 export interface BackupUploadResult {
   provider: BackupDestinationType;
@@ -45,8 +56,32 @@ export interface RemoteBackupFilePutOptions {
   contentType?: string;
 }
 
+export interface RemoteBackupFileDownloadOptions {
+  maxBytes?: number;
+}
+
+function getRemoteDownloadLimit(options: RemoteBackupFileDownloadOptions): number {
+  const value = options.maxBytes ?? MAX_REMOTE_BACKUP_DOWNLOAD_BYTES;
+  if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_REMOTE_BACKUP_DOWNLOAD_BYTES) {
+    throw new Error('Remote backup download limit is invalid');
+  }
+  return value;
+}
+
 function isBackupArchiveName(name: string): boolean {
   return /\.zip$/i.test(String(name || '').trim());
+}
+
+async function fetchBackupEndpoint(input: RequestInfo | URL, init: RequestInit): Promise<Response> {
+  const response = await fetch(input, {
+    ...init,
+    // Backup requests carry provider credentials and vault data. Never follow a
+    // redirect because Fetch can forward authentication headers across origins.
+    // Cloudflare Workers does not implement redirect="error", so use manual
+    // handling and reject every 3xx response explicitly.
+    redirect: 'manual',
+  });
+  return rejectRedirectResponse(response, 'Remote backup endpoint');
 }
 
 function encodePathSegments(path: string): string {
@@ -127,18 +162,50 @@ function parseHttpDate(value: string): string | null {
   return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
 }
 
-function extractXmlBlocks(xml: string, tagName: string): string[] {
-  const pattern = new RegExp(`<(?:[^:>]+:)?${tagName}\\b[^>]*>([\\s\\S]*?)</(?:[^:>]+:)?${tagName}>`, 'gi');
+type XmlBlockTag = 'response' | 'CommonPrefixes' | 'Contents';
+type XmlValueTag =
+  | 'href'
+  | 'resourcetype'
+  | 'getcontentlength'
+  | 'getlastmodified'
+  | 'Prefix'
+  | 'Key'
+  | 'Size'
+  | 'LastModified'
+  | 'NextContinuationToken';
+
+const XML_BLOCK_PATTERNS: Record<XmlBlockTag, RegExp> = {
+  response: /<(?:[^:>]+:)?response\b[^>]*>([\s\S]*?)<\/(?:[^:>]+:)?response>/gi,
+  CommonPrefixes: /<(?:[^:>]+:)?CommonPrefixes\b[^>]*>([\s\S]*?)<\/(?:[^:>]+:)?CommonPrefixes>/gi,
+  Contents: /<(?:[^:>]+:)?Contents\b[^>]*>([\s\S]*?)<\/(?:[^:>]+:)?Contents>/gi,
+};
+
+const XML_VALUE_PATTERNS: Record<XmlValueTag, RegExp> = {
+  href: /<(?:[^:>]+:)?href\b[^>]*>([\s\S]*?)<\/(?:[^:>]+:)?href>/i,
+  resourcetype: /<(?:[^:>]+:)?resourcetype\b[^>]*>([\s\S]*?)<\/(?:[^:>]+:)?resourcetype>/i,
+  getcontentlength: /<(?:[^:>]+:)?getcontentlength\b[^>]*>([\s\S]*?)<\/(?:[^:>]+:)?getcontentlength>/i,
+  getlastmodified: /<(?:[^:>]+:)?getlastmodified\b[^>]*>([\s\S]*?)<\/(?:[^:>]+:)?getlastmodified>/i,
+  Prefix: /<(?:[^:>]+:)?Prefix\b[^>]*>([\s\S]*?)<\/(?:[^:>]+:)?Prefix>/i,
+  Key: /<(?:[^:>]+:)?Key\b[^>]*>([\s\S]*?)<\/(?:[^:>]+:)?Key>/i,
+  Size: /<(?:[^:>]+:)?Size\b[^>]*>([\s\S]*?)<\/(?:[^:>]+:)?Size>/i,
+  LastModified: /<(?:[^:>]+:)?LastModified\b[^>]*>([\s\S]*?)<\/(?:[^:>]+:)?LastModified>/i,
+  NextContinuationToken: /<(?:[^:>]+:)?NextContinuationToken\b[^>]*>([\s\S]*?)<\/(?:[^:>]+:)?NextContinuationToken>/i,
+};
+
+function extractXmlBlocks(xml: string, tagName: XmlBlockTag): string[] {
+  const pattern = XML_BLOCK_PATTERNS[tagName];
+  pattern.lastIndex = 0;
   const blocks: string[] = [];
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(xml))) {
     blocks.push(match[1]);
   }
+  pattern.lastIndex = 0;
   return blocks;
 }
 
-function extractXmlFirst(xml: string, tagName: string): string | null {
-  const pattern = new RegExp(`<(?:[^:>]+:)?${tagName}\\b[^>]*>([\\s\\S]*?)</(?:[^:>]+:)?${tagName}>`, 'i');
+function extractXmlFirst(xml: string, tagName: XmlValueTag): string | null {
+  const pattern = XML_VALUE_PATTERNS[tagName];
   const match = xml.match(pattern);
   return match?.[1] ? decodeXmlText(match[1].trim()) : null;
 }
@@ -247,7 +314,7 @@ async function ensureWebDavDirectory(baseUrl: string, directoryPath: string, aut
   for (const segment of segments) {
     current = buildJoinedPath(current, segment);
     const url = buildWebDavUrl(baseUrl, current);
-    const response = await fetch(url, {
+    const response = await fetchBackupEndpoint(url, {
       method: 'MKCOL',
       headers: {
         Authorization: authHeader,
@@ -270,7 +337,7 @@ async function ensureWebDavDirectoryCached(
     current = buildJoinedPath(current, segment);
     if (ensuredDirectories.has(current)) continue;
     const url = buildWebDavUrl(baseUrl, current);
-    const response = await fetch(url, {
+    const response = await fetchBackupEndpoint(url, {
       method: 'MKCOL',
       headers: {
         Authorization: authHeader,
@@ -303,7 +370,7 @@ async function putToWebDav(
     }
   }
 
-  const response = await fetch(buildWebDavUrl(config.baseUrl, remoteFilePath), {
+  const response = await fetchBackupEndpoint(buildWebDavUrl(config.baseUrl, remoteFilePath), {
     method: 'PUT',
     headers: {
       Authorization: authHeader,
@@ -340,7 +407,7 @@ async function listWebDavEntries(config: WebDavBackupDestination, relativePath: 
   const currentPath = normalizeRelativePath(relativePath);
   const targetFullPath = webDavFullPath(config, currentPath);
   const authHeader = toBasicAuthHeader(config.username, config.password);
-  const response = await fetch(buildWebDavUrl(config.baseUrl, targetFullPath), {
+  const response = await fetchBackupEndpoint(buildWebDavUrl(config.baseUrl, targetFullPath), {
     method: 'PROPFIND',
     headers: {
       Authorization: authHeader,
@@ -361,7 +428,7 @@ async function listWebDavEntries(config: WebDavBackupDestination, relativePath: 
     throw new Error(`WebDAV listing failed: ${response.status}`);
   }
 
-  const xml = await response.text();
+  const xml = await readBoundedResponseText(response, MAX_REMOTE_LIST_RESPONSE_BYTES, 'WebDAV listing response');
   const rootFullPath = trimSlashes(config.remotePath);
   const items: RemoteBackupItem[] = [];
   for (const block of extractXmlBlocks(xml, 'response')) {
@@ -391,6 +458,9 @@ async function listWebDavEntries(config: WebDavBackupDestination, relativePath: 
       size: !isDirectory && sizeRaw && Number.isFinite(Number(sizeRaw)) ? Number(sizeRaw) : null,
       modifiedAt: modifiedAtRaw ? parseHttpDate(modifiedAtRaw) : null,
     });
+    if (items.length > MAX_REMOTE_LIST_ITEMS) {
+      throw new Error('WebDAV listing contains too many entries');
+    }
   }
 
   return {
@@ -401,14 +471,18 @@ async function listWebDavEntries(config: WebDavBackupDestination, relativePath: 
   };
 }
 
-async function downloadFromWebDav(config: WebDavBackupDestination, relativePath: string): Promise<RemoteBackupFile> {
+async function downloadFromWebDav(
+  config: WebDavBackupDestination,
+  relativePath: string,
+  options: RemoteBackupFileDownloadOptions = {}
+): Promise<RemoteBackupFile> {
   const normalized = normalizeRelativePath(relativePath);
   if (!normalized || normalized.endsWith('/')) {
     throw new Error('Please select a backup file');
   }
   const authHeader = toBasicAuthHeader(config.username, config.password);
   const remotePath = webDavFullPath(config, normalized);
-  const response = await fetch(buildWebDavUrl(config.baseUrl, remotePath), {
+  const response = await fetchBackupEndpoint(buildWebDavUrl(config.baseUrl, remotePath), {
     method: 'GET',
     headers: {
       Authorization: authHeader,
@@ -422,14 +496,14 @@ async function downloadFromWebDav(config: WebDavBackupDestination, relativePath:
     remotePath: normalized,
     fileName: basename(normalized) || 'backup.zip',
     contentType: String(response.headers.get('Content-Type') || 'application/zip').trim() || 'application/zip',
-    bytes: new Uint8Array(await response.arrayBuffer()),
+    bytes: await readBoundedResponseBytes(response, getRemoteDownloadLimit(options), 'WebDAV download'),
   };
 }
 
 async function deleteFromWebDav(config: WebDavBackupDestination, relativePath: string): Promise<void> {
   const authHeader = toBasicAuthHeader(config.username, config.password);
   const remotePath = webDavFullPath(config, relativePath);
-  const response = await fetch(buildWebDavUrl(config.baseUrl, remotePath), {
+  const response = await fetchBackupEndpoint(buildWebDavUrl(config.baseUrl, remotePath), {
     method: 'DELETE',
     headers: {
       Authorization: authHeader,
@@ -447,7 +521,7 @@ async function existsInWebDav(config: WebDavBackupDestination, relativePath: str
 async function statWebDavFile(config: WebDavBackupDestination, relativePath: string): Promise<RemoteBackupFileStat | null> {
   const authHeader = toBasicAuthHeader(config.username, config.password);
   const remotePath = webDavFullPath(config, relativePath);
-  const response = await fetch(buildWebDavUrl(config.baseUrl, remotePath), {
+  const response = await fetchBackupEndpoint(buildWebDavUrl(config.baseUrl, remotePath), {
     method: 'HEAD',
     headers: {
       Authorization: authHeader,
@@ -519,7 +593,7 @@ async function signedS3Request(
     config.region || 'auto'
   );
 
-  return fetch(url, {
+  return fetchBackupEndpoint(url, {
     method,
     headers: {
       Authorization: authorization,
@@ -561,8 +635,14 @@ async function listS3Entries(config: S3BackupDestination, relativePath: string):
   const rootPrefix = trimSlashes(config.rootPath);
   const items: RemoteBackupItem[] = [];
   let continuationToken = '';
+  let pageCount = 0;
+  const seenContinuationTokens = new Set<string>();
 
   do {
+    pageCount += 1;
+    if (pageCount > MAX_REMOTE_S3_LIST_PAGES) {
+      throw new Error('S3 listing contains too many pages');
+    }
     const url = s3BucketBaseUrl(config);
     url.searchParams.set('list-type', '2');
     url.searchParams.set('delimiter', '/');
@@ -574,7 +654,7 @@ async function listS3Entries(config: S3BackupDestination, relativePath: string):
       throw new Error(`S3 listing failed: ${response.status}`);
     }
 
-    const xml = await response.text();
+    const xml = await readBoundedResponseText(response, MAX_REMOTE_LIST_RESPONSE_BYTES, 'S3 listing response');
 
     for (const prefix of extractXmlBlocks(xml, 'CommonPrefixes')) {
       const fullPrefix = trimSlashes(extractXmlFirst(prefix, 'Prefix') || '');
@@ -597,6 +677,9 @@ async function listS3Entries(config: S3BackupDestination, relativePath: string):
         size: null,
         modifiedAt: null,
       });
+      if (items.length > MAX_REMOTE_LIST_ITEMS) {
+        throw new Error('S3 listing contains too many entries');
+      }
     }
 
     for (const content of extractXmlBlocks(xml, 'Contents')) {
@@ -616,9 +699,17 @@ async function listS3Entries(config: S3BackupDestination, relativePath: string):
         size: Number(extractXmlFirst(content, 'Size') || 0) || null,
         modifiedAt: parseHttpDate(extractXmlFirst(content, 'LastModified') || '') || null,
       });
+      if (items.length > MAX_REMOTE_LIST_ITEMS) {
+        throw new Error('S3 listing contains too many entries');
+      }
     }
 
-    continuationToken = extractXmlFirst(xml, 'NextContinuationToken') || '';
+    const nextContinuationToken = extractXmlFirst(xml, 'NextContinuationToken') || '';
+    if (nextContinuationToken && seenContinuationTokens.has(nextContinuationToken)) {
+      throw new Error('S3 listing returned a repeated continuation token');
+    }
+    if (nextContinuationToken) seenContinuationTokens.add(nextContinuationToken);
+    continuationToken = nextContinuationToken;
   } while (continuationToken);
 
   const deduped = new Map<string, RemoteBackupItem>();
@@ -632,7 +723,11 @@ async function listS3Entries(config: S3BackupDestination, relativePath: string):
   };
 }
 
-async function downloadFromS3(config: S3BackupDestination, relativePath: string): Promise<RemoteBackupFile> {
+async function downloadFromS3(
+  config: S3BackupDestination,
+  relativePath: string,
+  options: RemoteBackupFileDownloadOptions = {}
+): Promise<RemoteBackupFile> {
   const normalized = normalizeRelativePath(relativePath);
   if (!normalized || normalized.endsWith('/')) {
     throw new Error('Please select a backup file');
@@ -648,7 +743,7 @@ async function downloadFromS3(config: S3BackupDestination, relativePath: string)
     remotePath: normalized,
     fileName: basename(normalized) || 'backup.zip',
     contentType: String(response.headers.get('Content-Type') || 'application/zip').trim() || 'application/zip',
-    bytes: new Uint8Array(await response.arrayBuffer()),
+    bytes: await readBoundedResponseBytes(response, getRemoteDownloadLimit(options), 'S3 download'),
   };
 }
 
@@ -688,7 +783,11 @@ interface ConfiguredDestinationAdapter {
   upload: (config: WebDavBackupDestination | S3BackupDestination, archive: Uint8Array, fileName: string) => Promise<BackupUploadResult>;
   putFile: (config: WebDavBackupDestination | S3BackupDestination, relativePath: string, bytes: Uint8Array, options?: RemoteBackupFilePutOptions) => Promise<void>;
   list: (config: WebDavBackupDestination | S3BackupDestination, relativePath: string) => Promise<RemoteBackupListResult>;
-  download: (config: WebDavBackupDestination | S3BackupDestination, relativePath: string) => Promise<RemoteBackupFile>;
+  download: (
+    config: WebDavBackupDestination | S3BackupDestination,
+    relativePath: string,
+    options?: RemoteBackupFileDownloadOptions
+  ) => Promise<RemoteBackupFile>;
   deleteFile: (config: WebDavBackupDestination | S3BackupDestination, relativePath: string) => Promise<void>;
   exists: (config: WebDavBackupDestination | S3BackupDestination, relativePath: string) => Promise<boolean>;
   stat: (config: WebDavBackupDestination | S3BackupDestination, relativePath: string) => Promise<RemoteBackupFileStat | null>;
@@ -699,7 +798,7 @@ export interface RemoteBackupTransferSession {
   uploadArchive(archive: Uint8Array, fileName: string): Promise<BackupUploadResult>;
   putFile(relativePath: string, bytes: Uint8Array, options?: RemoteBackupFilePutOptions): Promise<void>;
   list(relativePath: string): Promise<RemoteBackupListResult>;
-  download(relativePath: string): Promise<RemoteBackupFile>;
+  download(relativePath: string, options?: RemoteBackupFileDownloadOptions): Promise<RemoteBackupFile>;
   deleteFile(relativePath: string): Promise<void>;
   exists(relativePath: string): Promise<boolean>;
   stat(relativePath: string): Promise<RemoteBackupFileStat | null>;
@@ -717,7 +816,7 @@ function resolveConfiguredDestinationAdapter(
       upload: (config, archive, fileName) => uploadToWebDav(config as WebDavBackupDestination, archive, fileName),
       putFile: (config, relativePath, bytes, options) => putToWebDav(config as WebDavBackupDestination, relativePath, bytes, options),
       list: (config, relativePath) => listWebDavEntries(config as WebDavBackupDestination, relativePath),
-      download: (config, relativePath) => downloadFromWebDav(config as WebDavBackupDestination, relativePath),
+      download: (config, relativePath, options) => downloadFromWebDav(config as WebDavBackupDestination, relativePath, options),
       deleteFile: (config, relativePath) => deleteFromWebDav(config as WebDavBackupDestination, relativePath),
       exists: (config, relativePath) => existsInWebDav(config as WebDavBackupDestination, relativePath),
       stat: (config, relativePath) => statWebDavFile(config as WebDavBackupDestination, relativePath),
@@ -730,7 +829,7 @@ function resolveConfiguredDestinationAdapter(
       upload: (config, archive, fileName) => uploadToS3(config as S3BackupDestination, archive, fileName),
       putFile: (config, relativePath, bytes, options) => putToS3(config as S3BackupDestination, relativePath, bytes, options),
       list: (config, relativePath) => listS3Entries(config as S3BackupDestination, relativePath),
-      download: (config, relativePath) => downloadFromS3(config as S3BackupDestination, relativePath),
+      download: (config, relativePath, options) => downloadFromS3(config as S3BackupDestination, relativePath, options),
       deleteFile: (config, relativePath) => deleteFromS3(config as S3BackupDestination, relativePath),
       exists: (config, relativePath) => existsInS3(config as S3BackupDestination, relativePath),
       stat: (config, relativePath) => statS3File(config as S3BackupDestination, relativePath),
@@ -766,7 +865,8 @@ export function createRemoteBackupTransferSession(destination: BackupDestination
     },
     putFile,
     list: async (relativePath: string) => adapter.list(adapter.config, relativePath),
-    download: async (relativePath: string) => adapter.download(adapter.config, relativePath),
+    download: async (relativePath: string, options: RemoteBackupFileDownloadOptions = {}) =>
+      adapter.download(adapter.config, relativePath, options),
     deleteFile: async (relativePath: string) => adapter.deleteFile(adapter.config, normalizeRelativePath(relativePath)),
     exists: async (relativePath: string) => adapter.exists(adapter.config, normalizeRelativePath(relativePath)),
     stat: async (relativePath: string) => adapter.stat(adapter.config, normalizeRelativePath(relativePath)),
@@ -785,8 +885,12 @@ export async function listRemoteBackupEntries(destination: BackupDestinationReco
   return createRemoteBackupTransferSession(destination).list(relativePath);
 }
 
-export async function downloadRemoteBackupFile(destination: BackupDestinationRecord, relativePath: string): Promise<RemoteBackupFile> {
-  return createRemoteBackupTransferSession(destination).download(relativePath);
+export async function downloadRemoteBackupFile(
+  destination: BackupDestinationRecord,
+  relativePath: string,
+  options: RemoteBackupFileDownloadOptions = {}
+): Promise<RemoteBackupFile> {
+  return createRemoteBackupTransferSession(destination).download(relativePath, options);
 }
 
 export async function deleteRemoteBackupFile(destination: BackupDestinationRecord, relativePath: string): Promise<void> {

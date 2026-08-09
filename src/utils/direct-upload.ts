@@ -20,6 +20,7 @@ interface ParseDirectUploadOptions {
 }
 
 const MULTIPART_FORMDATA_OVERHEAD_BYTES = 256 * 1024;
+const DIRECT_UPLOAD_STREAM_ERROR_PREFIX = 'Direct upload rejected:';
 
 export function buildDirectUploadUrl(request: Request, path: string, token: string): string {
   const version = '2023-11-03';
@@ -48,6 +49,74 @@ function parseContentLength(request: Request): number | null {
   return Math.floor(value);
 }
 
+function guardedUploadStream(
+  body: ReadableStream<Uint8Array>,
+  options: {
+    expectedSize: number;
+    maxFileSize: number;
+    tooLargeMessage: string;
+    sizeMismatchMessage: string;
+  }
+): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  let received = 0;
+  let finished = false;
+
+  const reject = async (controller: ReadableStreamDefaultController<Uint8Array>, message: string) => {
+    finished = true;
+    try {
+      await reader.cancel(message);
+    } catch {
+      // The source may already be closed after an HTTP framing error.
+    }
+    controller.error(new Error(`${DIRECT_UPLOAD_STREAM_ERROR_PREFIX} ${message}`));
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (finished) return;
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          finished = true;
+          if (received !== options.expectedSize) {
+            controller.error(new Error(`${DIRECT_UPLOAD_STREAM_ERROR_PREFIX} ${options.sizeMismatchMessage}`));
+            return;
+          }
+          controller.close();
+          return;
+        }
+
+        const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+        received += chunk.byteLength;
+        if (received > options.maxFileSize) {
+          await reject(controller, options.tooLargeMessage);
+          return;
+        }
+        if (received > options.expectedSize) {
+          await reject(controller, options.sizeMismatchMessage);
+          return;
+        }
+        controller.enqueue(chunk);
+      } catch (error) {
+        finished = true;
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      finished = true;
+      await reader.cancel(reason).catch(() => undefined);
+    },
+  });
+}
+
+export function directUploadValidationMessage(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : String(error || '');
+  const index = message.indexOf(DIRECT_UPLOAD_STREAM_ERROR_PREFIX);
+  if (index < 0) return null;
+  return message.slice(index + DIRECT_UPLOAD_STREAM_ERROR_PREFIX.length).trim() || null;
+}
+
 export async function parseDirectUploadPayload(
   request: Request,
   options: ParseDirectUploadOptions
@@ -66,6 +135,9 @@ export async function parseDirectUploadPayload(
 
   if (contentType.includes('multipart/form-data')) {
     const declaredSize = parseContentLength(request);
+    if (declaredSize === null) {
+      return errorResponse(contentLengthRequiredMessage, 411);
+    }
     if (declaredSize !== null && declaredSize > getMultipartRequestMaxBytes(maxFileSize)) {
       return errorResponse(tooLargeMessage, 413);
     }
@@ -95,10 +167,10 @@ export async function parseDirectUploadPayload(
   }
 
   const declaredSize = parseContentLength(request);
-  const uploadSize = declaredSize ?? (expectedSize && expectedSize > 0 ? expectedSize : null);
-  if (uploadSize === null) {
+  if (declaredSize === null) {
     return errorResponse(contentLengthRequiredMessage, 400);
   }
+  const uploadSize = declaredSize;
   if (uploadSize > maxFileSize) {
     return errorResponse(tooLargeMessage, 413);
   }
@@ -107,7 +179,12 @@ export async function parseDirectUploadPayload(
   }
 
   return {
-    body: request.body,
+    body: guardedUploadStream(request.body, {
+      expectedSize: uploadSize,
+      maxFileSize,
+      tooLargeMessage,
+      sizeMismatchMessage: sizeMismatchMessage || 'File size does not match.',
+    }),
     contentType: contentType || 'application/octet-stream',
     size: uploadSize,
   };

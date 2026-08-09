@@ -42,7 +42,7 @@ export function subscribePasswordSecurityState(listener: () => void): () => void
 
 export function startPasswordSecurityScan(fingerprint: string, ciphers: Cipher[]): void {
   const current = getPasswordSecurityState(fingerprint);
-  current.controller?.abort();
+  state?.controller?.abort();
   const controller = new AbortController();
   const total = ciphers.filter((cipher) => Number(cipher.type) === 1 && !cipher.deletedDate && !(cipher as { deletedAt?: string | null }).deletedAt && !!cipher.login?.decPassword).length;
   state = { ...current, report: null, scannedAt: null, scanning: true, progress: { checked: 0, total }, scanError: false, controller };

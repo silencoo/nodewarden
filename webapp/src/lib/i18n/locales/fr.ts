@@ -348,7 +348,7 @@ const fr: Record<string, string> = {
   "txt_backup_error_s3_delete_failed_status": "La suppression S3 a échoué : HTTP {status}.",
   "txt_backup_error_s3_download_failed_status": "Le téléchargement S3 a échoué : HTTP {status}.",
   "txt_backup_error_s3_endpoint_required": "L'Endpoint S3 est requis.",
-  "txt_backup_error_s3_endpoint_protocol": "L'Endpoint S3 doit commencer par http:// ou https://.",
+  "txt_backup_error_s3_endpoint_protocol": "Le point de terminaison S3 doit utiliser https://.",
   "txt_backup_error_s3_existence_check_failed_status": "La vérification d'existence S3 a échoué : HTTP {status}.",
   "txt_backup_error_s3_listing_failed_status": "Le listage S3 a échoué : HTTP {status}.",
   "txt_backup_error_s3_secret_key_required": "La clé secrète S3 est requise.",
@@ -373,7 +373,7 @@ const fr: Record<string, string> = {
   "txt_backup_error_webdav_path_too_deep": "Le chemin de sauvegarde distant WebDAV est trop profond pour un traitement par lots sécurisé des pièces jointes.",
   "txt_backup_error_webdav_upload_failed_status": "Le téléchargement WebDAV a échoué : HTTP {status}.",
   "txt_backup_error_webdav_url_required": "L'URL du serveur WebDAV est requise.",
-  "txt_backup_error_webdav_url_protocol": "L'URL du serveur WebDAV doit commencer par http:// ou https://.",
+  "txt_backup_error_webdav_url_protocol": "L'URL du serveur WebDAV doit utiliser https://.",
   "txt_backup_error_webdav_username_required": "Le nom d'utilisateur WebDAV est requis.",
   "txt_backup_destination": "Destination de sauvegarde",
   "txt_backup_protocol_webdav": "WebDAV",
@@ -1463,5 +1463,21 @@ Object.assign(fr, {
 Object.assign(fr, { "txt_password_security_last_checked": "Dernière vérification : {value}" });
 Object.assign(fr, { "txt_no_password_risks_in_filter": "Aucun risque de mot de passe dans cette catégorie" });
 Object.assign(fr, { "txt_password_security_show_all": "Tout afficher", "txt_password_security_hide_all": "Tout masquer", "txt_password_security_jump": "Ouvrir", "txt_password_security_exposed_short": "Exposé {count} fois", "txt_password_security_weak_short": "Mot de passe faible", "txt_password_security_reused_short": "Réutilisé" });
+
+Object.assign(fr, {
+  "txt_backup_encrypt_export": "Chiffrer le ZIP exporté",
+  "txt_backup_encrypt_remote": "Chiffrer la sauvegarde avant l’envoi distant",
+  "txt_backup_encryption_password": "Mot de passe de chiffrement de la sauvegarde",
+  "txt_backup_encryption_password_confirm": "Confirmer le mot de passe de sauvegarde",
+  "txt_backup_encryption_password_help": "Utilise le chiffrement ZIP AES-256. Conservez ce mot de passe hors du serveur ; il est irrécupérable.",
+  "txt_backup_remote_encryption_help": "Les nouvelles archives distantes sont chiffrées avant l’envoi. Les archives existantes exigent leur mot de passe d’origine.",
+  "txt_backup_remote_encryption_disabled_warning": "Le fournisseur de stockage pourra lire la sauvegarde. Activez le chiffrement avant d’utiliser cette destination.",
+  "txt_backup_encryption_password_invalid": "Utilisez un mot de passe de sauvegarde de 12 à 1024 caractères.",
+  "txt_backup_encryption_password_mismatch": "Les mots de passe de sauvegarde ne correspondent pas.",
+  "txt_backup_encryption_mixed_archive": "Cette sauvegarde mélange des fichiers chiffrés et non chiffrés et ne peut pas être restaurée en sécurité.",
+  "txt_backup_encryption_password_required": "Saisissez le mot de passe du fichier de sauvegarde.",
+  "txt_backup_file_password": "Mot de passe du fichier de sauvegarde",
+  "txt_backup_file_password_help": "C’est le mot de passe utilisé pour chiffrer le ZIP, pas votre mot de passe principal."
+});
 
 export default fr;

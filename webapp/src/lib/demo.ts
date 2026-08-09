@@ -686,6 +686,10 @@ export const DEMO_BACKUP_SETTINGS: AdminBackupSettings = {
       name: 'Demo WebDAV',
       type: 'webdav',
       includeAttachments: true,
+      encryption: {
+        enabled: true,
+        password: '********',
+      },
       destination: {
         baseUrl: 'https://dav.example.com/nodewarden',
         username: 'demo-backup',
@@ -1562,7 +1566,7 @@ export function createDemoMainRoutesProps(base: AppMainRoutesProps, notify: Noti
       notify('success', t('txt_invite_deleted'));
     },
     onLoadAuditLogSettings: async () => ({ retentionDays: 90, maxEntries: null }),
-    onSaveAuditLogSettings: async (settings) => {
+    onSaveAuditLogSettings: async (_masterPassword, settings) => {
       notify('success', t('txt_log_settings_saved'));
       return settings;
     },

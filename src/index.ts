@@ -7,8 +7,7 @@ import { applyCors, jsonResponse } from './utils/response';
 import { runScheduledBackupIfDue } from './handlers/backup';
 import {
   isBackendRequestPath,
-  isWebVaultHidden,
-  webVaultNotFoundResponse,
+  enforceWebVaultVisibility,
 } from './web-vault-visibility';
 
 let dbInitialized = false;
@@ -35,6 +34,7 @@ function addSearchIndexHeaders(request: Request, response: Response): Response {
 
   const headers = new Headers(response.headers);
   headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
+  if (contentType.includes('text/html')) headers.set('Referrer-Policy', 'no-referrer');
 
   return new Response(response.body, {
     status: response.status,
@@ -79,10 +79,10 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     void ctx;
     const normalizedRequest = normalizeRequestUrl(request);
-    const requestPath = new URL(normalizedRequest.url).pathname;
 
-    if (isWebVaultHidden(env) && !isBackendRequestPath(requestPath)) {
-      return webVaultNotFoundResponse(normalizedRequest);
+    const webVaultVisibilityResponse = await enforceWebVaultVisibility(normalizedRequest, env);
+    if (webVaultVisibilityResponse) {
+      return applyCors(normalizedRequest, webVaultVisibilityResponse, env);
     }
 
     const assetResponse = await maybeServeAsset(normalizedRequest, env);

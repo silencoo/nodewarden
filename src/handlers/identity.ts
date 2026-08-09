@@ -507,10 +507,10 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
         if (!publicId || !effectiveYubiKeyPublicIds.includes(publicId)) {
           return recordFailedTwoFactorAndBuildResponse(rateLimit, loginIdentifier);
         }
-        let credentials = await getYubicoCredentials(env.DB);
+        let credentials = await getYubicoCredentials(env);
         let initializedWithCurrentOtp = false;
         if (!credentials) {
-          const initialized = await initializeYubicoCredentialsOnce(env.DB, user.email, normalizedTwoFactorToken);
+          const initialized = await initializeYubicoCredentialsOnce(env, user.email, normalizedTwoFactorToken);
           if (!initialized) {
             return recordFailedTwoFactorAndBuildResponse(rateLimit, loginIdentifier);
           }
@@ -800,7 +800,7 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
       return identityErrorResponse('Account is disabled', 'invalid_grant', 400);
     }
 
-    if (!user.apiKey || !(await verifyApiKey(clientSecret, user.apiKey))) {
+    if (!user.apiKey || !(await verifyApiKey(clientSecret, user.apiKey, env.JWT_SECRET, user.id))) {
       await rateLimit.recordFailedLogin(loginIdentifier);
       await safeWriteAuditEvent(env, {
         actorUserId: user.id,

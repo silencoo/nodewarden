@@ -116,11 +116,15 @@ export async function getAuditLogSettings(authedFetch: AuthedFetch): Promise<Aud
   };
 }
 
-export async function saveAuditLogSettings(authedFetch: AuthedFetch, settings: AuditLogSettings): Promise<AuditLogSettings> {
+export async function saveAuditLogSettings(
+  authedFetch: AuthedFetch,
+  settings: AuditLogSettings,
+  masterPasswordHash: string
+): Promise<AuditLogSettings> {
   const resp = await authedFetch('/api/admin/logs/settings', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(settings),
+    body: JSON.stringify({ ...settings, masterPasswordHash }),
   });
   if (!resp.ok) throw new Error('Failed to save audit log settings');
   const body = await parseJson<AuditLogSettings & { object?: string }>(resp);
@@ -130,8 +134,12 @@ export async function saveAuditLogSettings(authedFetch: AuthedFetch, settings: A
   };
 }
 
-export async function clearAuditLogs(authedFetch: AuthedFetch): Promise<number> {
-  const resp = await authedFetch('/api/admin/logs', { method: 'DELETE' });
+export async function clearAuditLogs(authedFetch: AuthedFetch, masterPasswordHash: string): Promise<number> {
+  const resp = await authedFetch('/api/admin/logs', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ masterPasswordHash }),
+  });
   if (!resp.ok) throw new Error('Failed to clear audit logs');
   const body = await parseJson<{ deleted?: number }>(resp);
   return Number(body?.deleted || 0);

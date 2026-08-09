@@ -7,8 +7,15 @@ import {
   inspectBackupArchiveFileNameChecksum,
   isSafeBackupAttachmentBlobName,
   parseBackupArchive,
+  replaceBackupArchiveBundleBytes,
   verifyBackupArchiveFileNameChecksum,
 } from '../services/backup-archive';
+import {
+  MAX_ENCRYPTED_BACKUP_ARCHIVE_BYTES,
+  decryptBackupZipBytes,
+  encryptBackupZipBytes,
+  getBackupZipEncryptionState,
+} from '../../shared/backup-encryption';
 import {
   type BackupDestinationRecord,
   type BackupSettingsInput,
@@ -51,6 +58,8 @@ import { notifyUserBackupProgress, notifyUserBackupRestoreProgress } from '../du
 import { getMultipartRequestMaxBytes } from '../utils/direct-upload';
 import { verifyPasskeyUserVerificationToken } from '../utils/user-verification-token';
 import { unzipSync } from 'fflate';
+import { LIMITS } from '../config/limits';
+import { readBoundedResponseBytes } from '../utils/bounded-response';
 
 function isAdmin(user: User): boolean {
   return user.role === 'admin' && user.status === 'active';
@@ -156,6 +165,8 @@ function contentDispositionBackup(fileName: string | null | undefined): string {
 }
 
 const REMOTE_ATTACHMENT_INDEX_PATH = 'attachments/.nodewarden-attachment-index.v1.json';
+const MAX_REMOTE_ATTACHMENT_INDEX_BYTES = 1024 * 1024;
+const MAX_REMOTE_ATTACHMENT_BATCH_RESPONSE_BYTES = 34 * 1024 * 1024;
 
 interface RemoteAttachmentIndexPayload {
   version: 1;
@@ -195,7 +206,9 @@ function getRemoteAttachmentSyncBatchSize(destination: BackupDestinationRecord):
 
 async function loadRemoteAttachmentIndex(session: RemoteBackupTransferSession): Promise<Map<string, number>> {
   try {
-    const file = await session.download(REMOTE_ATTACHMENT_INDEX_PATH);
+    const file = await session.download(REMOTE_ATTACHMENT_INDEX_PATH, {
+      maxBytes: MAX_REMOTE_ATTACHMENT_INDEX_BYTES,
+    });
     const payload = JSON.parse(new TextDecoder().decode(file.bytes)) as RemoteAttachmentIndexPayload;
     if (payload?.version !== 1 || !payload.blobs || typeof payload.blobs !== 'object') {
       return new Map<string, number>();
@@ -293,7 +306,9 @@ async function verifyUploadedBackupArchive(
     // Fall through to a full read-back verification when lightweight metadata is unavailable.
   }
 
-  const remoteFile = await session.download(archive.fileName);
+  const remoteFile = await session.download(archive.fileName, {
+    maxBytes: archive.bytes.byteLength,
+  });
   const checksumOk = await verifyBackupArchiveFileNameChecksum(remoteFile.bytes, archive.fileName);
   if (!checksumOk) {
     throw new Error('Remote backup ZIP checksum verification failed');
@@ -350,7 +365,7 @@ export async function executeConfiguredBackup(
       stageDetail: 'txt_backup_remote_run_progress_prepare_detail',
     });
     await touchLease();
-    const archive = await buildBackupArchive(env, now, {
+    let archive = await buildBackupArchive(env, now, {
       includeAttachments: destination.includeAttachments,
       timeZone: destination.schedule.timezone,
       progress: progress
@@ -398,6 +413,13 @@ export async function executeConfiguredBackup(
         await touchLease();
         await saveRemoteAttachmentIndex(remoteSession, remoteAttachmentIndex);
       }
+    }
+    if (destination.encryption.enabled) {
+      const encryptedBytes = await encryptBackupZipBytes(
+        archive.bytes,
+        destination.encryption.password
+      );
+      archive = await replaceBackupArchiveBundleBytes(archive, encryptedBytes);
     }
     let upload: Awaited<ReturnType<typeof uploadBackupArchive>> | null = null;
     let uploadVerificationMethod: 'metadata' | 'download' | null = null;
@@ -467,6 +489,7 @@ export async function executeConfiguredBackup(
       remotePath: upload.remotePath,
       fileName: archive.fileName,
       fileBytes: archive.bytes.byteLength,
+      encrypted: destination.encryption.enabled,
       uploadVerificationAttempts: maxArchiveUploadAttempts,
       uploadVerificationMethod,
       prunedFileCount,
@@ -612,7 +635,11 @@ async function downloadRemoteAttachmentViaDurableObject(
   if (!response.ok) {
     throw new Error(`Remote attachment download failed: ${response.status}`);
   }
-  return new Uint8Array(await response.arrayBuffer());
+  return readBoundedResponseBytes(
+    response,
+    LIMITS.attachment.maxFileSizeBytes,
+    'Remote attachment response'
+  );
 }
 
 async function downloadRemoteAttachmentBatchViaDurableObject(
@@ -640,7 +667,11 @@ async function downloadRemoteAttachmentBatchViaDurableObject(
     throw new Error(`Remote attachment batch download failed: ${response.status}`);
   }
 
-  const files = unzipSync(new Uint8Array(await response.arrayBuffer()));
+  const files = unzipSync(await readBoundedResponseBytes(
+    response,
+    MAX_REMOTE_ATTACHMENT_BATCH_RESPONSE_BYTES,
+    'Remote attachment batch response'
+  ));
   const manifestBytes = files['manifest.json'];
   if (!manifestBytes) return result;
   const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as {
@@ -688,6 +719,7 @@ function toImportStatusCode(message: string): number {
   if (lower.includes('checksum')) return 400;
   if (lower.includes('invalid remote backup path') || lower.includes('please select a backup zip file')) return 409;
   if (lower.includes('invalid backup') || lower.includes('invalid json')) return 400;
+  if (lower.includes('backup encryption') || lower.includes('encrypt every file entry')) return 400;
   if (lower.includes('fresh instance')) return 409;
   if (lower.includes('not configured') || lower.includes('kv')) return 409;
   return 500;
@@ -711,7 +743,14 @@ export async function importAndAuditRemoteBackupFile(
   };
   const restoreFileName = remoteFile.fileName || remotePath.split('/').pop() || remotePath;
   await touchLease();
-  const externalAttachmentBlobNames = collectExternalRemoteAttachmentBlobNames(remoteFile.bytes);
+  const encryptionState = await getBackupZipEncryptionState(remoteFile.bytes);
+  if (encryptionState === 'mixed') {
+    throw new Error('Backup archive must encrypt every file entry');
+  }
+  const archiveBytes = encryptionState === 'encrypted'
+    ? await decryptBackupZipBytes(remoteFile.bytes, destination.encryption.password)
+    : remoteFile.bytes;
+  const externalAttachmentBlobNames = collectExternalRemoteAttachmentBlobNames(archiveBytes);
   const externalAttachmentCache = new Map<string, Uint8Array | null>();
   const progress: BackupRestoreProgressReporter = async (event) => {
     await touchLease();
@@ -726,7 +765,7 @@ export async function importAndAuditRemoteBackupFile(
     );
   };
   const result = await importRemoteBackupArchiveBytes(
-    remoteFile.bytes,
+    archiveBytes,
     env,
     actorUserId,
     replaceExisting,
@@ -736,7 +775,9 @@ export async function importAndAuditRemoteBackupFile(
         const normalized = String(blobName || '').trim();
         if (!normalized) return null;
         if (externalAttachmentCache.has(normalized)) {
-          return externalAttachmentCache.get(normalized) || null;
+          const cached = externalAttachmentCache.get(normalized) || null;
+          externalAttachmentCache.delete(normalized);
+          return cached;
         }
 
         const start = Math.max(0, externalAttachmentBlobNames.indexOf(normalized));
@@ -756,7 +797,9 @@ export async function importAndAuditRemoteBackupFile(
           externalAttachmentCache.set(normalized, await downloadRemoteAttachmentViaDurableObject(env, destination, normalized).catch(() => null));
         }
         await touchLease();
-        return externalAttachmentCache.get(normalized) || null;
+        const loaded = externalAttachmentCache.get(normalized) || null;
+        externalAttachmentCache.delete(normalized);
+        return loaded;
       },
     },
     progress,
@@ -772,6 +815,7 @@ export async function importAndAuditRemoteBackupFile(
     ...getBackupDestinationSummary(destination),
     remotePath,
     bytes: remoteFile.bytes.byteLength,
+    encrypted: encryptionState === 'encrypted',
     trigger: 'remote',
     checksumMismatchAccepted,
     ...(auditMetadata || {}),
@@ -1044,7 +1088,9 @@ export async function handleDownloadAdminRemoteBackup(request: Request, env: Env
     const settings = await loadBackupSettings(storage, env, 'UTC');
     const path = ensureRemoteRestoreCandidate(String(body.path || ''));
     const destination = requireBackupDestination(settings, body.destinationId || null);
-    const remoteFile = await downloadRemoteBackupFile(destination, path);
+    const remoteFile = await downloadRemoteBackupFile(destination, path, {
+      maxBytes: MAX_ENCRYPTED_BACKUP_ARCHIVE_BYTES,
+    });
     return new Response(remoteFile.bytes, {
       status: 200,
       headers: {
@@ -1077,7 +1123,9 @@ export async function handleInspectAdminRemoteBackup(request: Request, env: Env,
     const settings = await loadBackupSettings(storage, env, 'UTC');
     const path = ensureRemoteRestoreCandidate(String(body.path || ''));
     const destination = requireBackupDestination(settings, body.destinationId || null);
-    const remoteFile = await downloadRemoteBackupFile(destination, path);
+    const remoteFile = await downloadRemoteBackupFile(destination, path, {
+      maxBytes: MAX_ENCRYPTED_BACKUP_ARCHIVE_BYTES,
+    });
     const integrity = await inspectBackupArchiveFileNameChecksum(remoteFile.bytes, remoteFile.fileName || path);
     return jsonResponse({
       object: 'backup-remote-integrity',
@@ -1290,8 +1338,8 @@ export async function handleAdminImportBackup(request: Request, env: Env, actorU
     return errorResponse('Content-Type must be multipart/form-data', 400);
   }
   const declaredSize = parseRequestContentLength(request);
-  if (declaredSize !== null && declaredSize > getMultipartRequestMaxBytes(MAX_BACKUP_ARCHIVE_BYTES)) {
-    return errorResponse(`Backup file too large. Maximum size is ${Math.floor(MAX_BACKUP_ARCHIVE_BYTES / (1024 * 1024))}MB`, 413);
+  if (declaredSize !== null && declaredSize > getMultipartRequestMaxBytes(MAX_ENCRYPTED_BACKUP_ARCHIVE_BYTES)) {
+    return errorResponse(`Backup file too large. Maximum size is ${Math.floor(MAX_ENCRYPTED_BACKUP_ARCHIVE_BYTES / (1024 * 1024))}MB`, 413);
   }
 
   let formData: FormData;
@@ -1305,8 +1353,8 @@ export async function handleAdminImportBackup(request: Request, env: Env, actorU
   if (!file || typeof file !== 'object' || !('arrayBuffer' in file)) {
     return errorResponse('Backup file is required', 400);
   }
-  if ('size' in file && typeof (file as File).size === 'number' && (file as File).size > MAX_BACKUP_ARCHIVE_BYTES) {
-    return errorResponse(`Backup file too large. Maximum size is ${Math.floor(MAX_BACKUP_ARCHIVE_BYTES / (1024 * 1024))}MB`, 413);
+  if ('size' in file && typeof (file as File).size === 'number' && (file as File).size > MAX_ENCRYPTED_BACKUP_ARCHIVE_BYTES) {
+    return errorResponse(`Backup file too large. Maximum size is ${Math.floor(MAX_ENCRYPTED_BACKUP_ARCHIVE_BYTES / (1024 * 1024))}MB`, 413);
   }
 
   const verificationError = await requireBackupUserVerification(actorUser, String(formData.get('masterPasswordHash') || ''), env);
@@ -1327,9 +1375,20 @@ export async function handleAdminImportBackup(request: Request, env: Env, actorU
     if (!checksumOk && !allowChecksumMismatch) {
       return errorResponse('Backup file checksum does not match its filename', 400);
     }
-    const imported = await runImportAndAudit(env, request, actorUser, archiveBytes, fileName || 'nodewarden_backup.zip', replaceExisting, {
+    const encryptionState = await getBackupZipEncryptionState(archiveBytes);
+    if (encryptionState === 'mixed') {
+      return errorResponse('Backup archive must encrypt every file entry', 400);
+    }
+    const importBytes = encryptionState === 'encrypted'
+      ? await decryptBackupZipBytes(archiveBytes, String(formData.get('backupPassword') || ''))
+      : archiveBytes;
+    if (importBytes.byteLength > MAX_BACKUP_ARCHIVE_BYTES) {
+      return errorResponse(`Backup file too large. Maximum size is ${Math.floor(MAX_BACKUP_ARCHIVE_BYTES / (1024 * 1024))}MB`, 413);
+    }
+    const imported = await runImportAndAudit(env, request, actorUser, importBytes, fileName || 'nodewarden_backup.zip', replaceExisting, {
       trigger: 'local',
       bytes: archiveBytes.byteLength,
+      encrypted: encryptionState === 'encrypted',
       checksumMismatchAccepted: !checksumOk,
     });
     return jsonResponse(imported.result);

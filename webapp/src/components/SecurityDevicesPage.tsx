@@ -121,41 +121,41 @@ export default function SecurityDevicesPage(props: SecurityDevicesPageProps) {
                 {t('txt_manage_device_sessions_and_30_day_totp_trusted_sessions')}
               </div>
             </div>
-            <div className="actions">
-              <button type="button" className="btn btn-secondary small" disabled={props.loading} onClick={props.onRefresh}>
-                <RefreshCw size={14} className="btn-icon" />
-                {t('txt_refresh')}
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary small"
-                disabled={props.loading || selectableDevices.length === 0}
-                onClick={toggleSelectAllDevices}
-              >
-                <CheckSquare size={14} className="btn-icon" />
-                {allSelectableSelected ? t('txt_clear_selection') : t('txt_select_all')}
-              </button>
-              <button
-                type="button"
-                className="btn btn-danger small"
-                disabled={selectedDevices.length === 0}
-                onClick={() => {
-                  props.onRemoveSelectedDevices(selectedDevices);
-                  setSelectedDeviceIds([]);
-                }}
-              >
-                <Trash2 size={14} className="btn-icon" />
-                {t('txt_remove_selected_devices', { count: selectedDevices.length })}
-              </button>
-              <button type="button" className="btn btn-danger small" onClick={props.onRevokeAll}>
-                <ShieldOff size={14} className="btn-icon" />
-                {t('txt_revoke_all_trusted')}
-              </button>
-              <button type="button" className="btn btn-danger small" onClick={props.onRemoveAll}>
-                <Trash2 size={14} className="btn-icon" />
-                {t('txt_remove_all_devices')}
-              </button>
-            </div>
+          </div>
+          <div className="actions authorized-devices-toolbar">
+            <button type="button" className="btn btn-secondary small" disabled={props.loading} onClick={props.onRefresh}>
+              <RefreshCw size={14} className="btn-icon" />
+              {t('txt_refresh')}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary small"
+              disabled={props.loading || selectableDevices.length === 0}
+              onClick={toggleSelectAllDevices}
+            >
+              <CheckSquare size={14} className="btn-icon" />
+              {allSelectableSelected ? t('txt_clear_selection') : t('txt_select_all')}
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger small"
+              disabled={selectedDevices.length === 0}
+              onClick={() => {
+                props.onRemoveSelectedDevices(selectedDevices);
+                setSelectedDeviceIds([]);
+              }}
+            >
+              <Trash2 size={14} className="btn-icon" />
+              {t('txt_remove_selected_devices', { count: selectedDevices.length })}
+            </button>
+            <button type="button" className="btn btn-danger small" onClick={props.onRevokeAll}>
+              <ShieldOff size={14} className="btn-icon" />
+              {t('txt_revoke_all_trusted')}
+            </button>
+            <button type="button" className="btn btn-danger small" onClick={props.onRemoveAll}>
+              <Trash2 size={14} className="btn-icon" />
+              {t('txt_remove_all_devices')}
+            </button>
           </div>
           {!!props.error && (
             <div className="local-error">

@@ -6,7 +6,12 @@ import { auditRequestMetadata, writeAuditEvent, safeWriteAuditEvent } from '../s
 import { jsonResponse, errorResponse } from '../utils/response';
 import { generateUUID } from '../utils/uuid';
 import { LIMITS } from '../config/limits';
-import { isStoredApiKeyHash } from '../utils/api-key';
+import {
+  decryptApiKey,
+  encryptApiKey,
+  isStoredApiKeyEncrypted,
+  isStoredApiKeyHash,
+} from '../utils/api-key';
 import { findMatchingTotpCounter, isTotpEnabled } from '../utils/totp';
 import { createRecoveryCode, recoveryCodeEquals } from '../utils/recovery-code';
 import { buildAccountKeys } from '../utils/user-decryption';
@@ -186,11 +191,18 @@ function readBodyString(body: Record<string, unknown>, names: string[]): string 
   return '';
 }
 
+function readOwnDataProperty(source: unknown, key: string): unknown {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return undefined;
+  if (key === '__proto__' || key === 'prototype' || key === 'constructor') return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(source, key);
+  return descriptor && 'value' in descriptor ? descriptor.value : undefined;
+}
+
 function readNestedString(source: unknown, path: string[]): string {
   let current = source;
   for (const key of path) {
-    if (!current || typeof current !== 'object') return '';
-    current = (current as Record<string, unknown>)[key];
+    current = readOwnDataProperty(current, key);
+    if (current === undefined) return '';
   }
   return typeof current === 'string' ? current : '';
 }
@@ -198,8 +210,8 @@ function readNestedString(source: unknown, path: string[]): string {
 function readNestedNumber(source: unknown, path: string[]): number | undefined {
   let current = source;
   for (const key of path) {
-    if (!current || typeof current !== 'object') return undefined;
-    current = (current as Record<string, unknown>)[key];
+    current = readOwnDataProperty(current, key);
+    if (current === undefined) return undefined;
   }
   return typeof current === 'number' ? current : undefined;
 }
@@ -317,9 +329,10 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
   const now = new Date().toISOString();
   const auth = new AuthService(env);
   const serverHash = await auth.hashPasswordServer(masterPasswordHash, email);
+  const userId = generateUUID();
 
   const user: User = {
-    id: generateUUID(),
+    id: userId,
     email,
     name: name || email,
     masterPasswordHint,
@@ -343,9 +356,13 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
     yubikeyKey4: null,
     yubikeyKey5: null,
     yubikeyNfc: false,
-    // Bitwarden creates a readable personal API key with the account. It is
-    // returned only after fresh user verification and is excluded from backups.
-    apiKey: randomStringAlphanum(LIMITS.auth.clientSecretLength),
+    // The personal API key remains retrievable after fresh user verification,
+    // but is application-encrypted before it is persisted and excluded from backups.
+    apiKey: await encryptApiKey(
+      randomStringAlphanum(LIMITS.auth.clientSecretLength),
+      env.JWT_SECRET,
+      userId
+    ),
     createdAt: now,
     updatedAt: now,
   };
@@ -853,7 +870,7 @@ function deviceVerificationSettingsResponse(_user: User): Record<string, unknown
 
 async function yubiKeySettingsResponse(storage: StorageService, env: Env, user: User): Promise<Record<string, unknown>> {
   void storage;
-  const credentials = await getYubicoCredentials(env.DB);
+  const credentials = await getYubicoCredentials(env);
   const canManageCredentials = user.role === 'admin' && user.status === 'active';
   return {
     ...yubiKeyResponse(user),
@@ -1057,7 +1074,7 @@ export async function handlePutTwoFactorYubiKey(request: Request, env: Env, user
     readBodyString(body, ['key5', 'Key5']),
   ];
   const publicIds: Array<string | null> = [];
-  let credentials = await getYubicoCredentials(env.DB);
+  let credentials = await getYubicoCredentials(env);
   let apiKeyBootstrapOtpIndex: number | null = null;
   for (const key of keys) {
     const trimmed = key.trim();
@@ -1072,7 +1089,7 @@ export async function handlePutTwoFactorYubiKey(request: Request, env: Env, user
       continue;
     }
     if (!credentials) {
-      const initialized = await initializeYubicoCredentialsOnce(env.DB, user.email, trimmed);
+      const initialized = await initializeYubicoCredentialsOnce(env, user.email, trimmed);
       if (!initialized) return errorResponse('Unable to initialize Yubico validation credentials.', 400);
       credentials = initialized.credentials;
       if (initialized.created) apiKeyBootstrapOtpIndex = publicIds.length;
@@ -1133,7 +1150,7 @@ export async function handlePutTwoFactorYubiKeyConfig(request: Request, env: Env
   const secretKey = readBodyString(body, ['yubicoSecretKey', 'YubicoSecretKey', 'secretKey', 'SecretKey']).trim();
   if (!clientId || !secretKey) return errorResponse('Yubico Client ID and Secret Key are required.', 400);
 
-  await replaceYubicoCredentials(env.DB, { clientId, secretKey });
+  await replaceYubicoCredentials(env, { clientId, secretKey });
   await writeAuditEvent(storage, {
     actorUserId: user.id,
     action: 'system.yubico.credentials.update',
@@ -1167,7 +1184,7 @@ export async function handleBootstrapTwoFactorYubiKeyConfig(request: Request, en
 
   const otp = readBodyString(body, ['otp', 'OTP', 'token', 'Token']).trim();
   if (!yubiKeyPublicIdFromOtp(otp)) return errorResponse('Invalid YubiKey OTP.', 400);
-  const existing = await getYubicoCredentials(env.DB);
+  const existing = await getYubicoCredentials(env);
   if (user.role !== 'admin' && existing) {
     return errorResponse('Yubico validation credentials are already configured.', 403);
   }
@@ -1178,9 +1195,9 @@ export async function handleBootstrapTwoFactorYubiKeyConfig(request: Request, en
     if (!credentials?.clientId || !credentials.secretKey) {
       return errorResponse('Unable to initialize Yubico validation credentials.', 400);
     }
-    await replaceYubicoCredentials(env.DB, credentials);
+    await replaceYubicoCredentials(env, credentials);
   } else {
-    const initialized = await initializeYubicoCredentialsOnce(env.DB, user.email, otp);
+    const initialized = await initializeYubicoCredentialsOnce(env, user.email, otp);
     if (!initialized?.created) {
       return errorResponse(
         initialized?.credentials
@@ -1578,12 +1595,30 @@ async function apiKey(request: Request, env: Env, userId: string, rotate: boolea
   }
 
   let auditAction = 'account.api_key.view';
+  let readableApiKey: string;
+  let shouldSaveEncryptedKey = false;
   if (rotate || !user.apiKey) {
-    user.apiKey = randomStringAlphanum(LIMITS.auth.clientSecretLength);
+    readableApiKey = randomStringAlphanum(LIMITS.auth.clientSecretLength);
+    user.apiKey = await encryptApiKey(readableApiKey, env.JWT_SECRET, user.id);
     user.updatedAt = new Date().toISOString();
+    shouldSaveEncryptedKey = true;
+    auditAction = rotate ? 'account.api_key.rotate' : 'account.api_key.create';
+  } else if (isStoredApiKeyEncrypted(user.apiKey)) {
+    try {
+      const decrypted = await decryptApiKey(user.apiKey, env.JWT_SECRET, user.id);
+      if (!decrypted) throw new Error('API key is unavailable');
+      readableApiKey = decrypted;
+    } catch {
+      return errorResponse('This API key cannot be displayed with the current server key. Rotate it to create a new one.', 409);
+    }
+  } else {
+    readableApiKey = user.apiKey;
+    user.apiKey = await encryptApiKey(readableApiKey, env.JWT_SECRET, user.id);
+    shouldSaveEncryptedKey = true;
+  }
+  if (shouldSaveEncryptedKey) {
     await storage.saveUser(user);
     AuthService.invalidateUserCache(user.id);
-    auditAction = rotate ? 'account.api_key.rotate' : 'account.api_key.create';
   }
   await writeAuditEvent(storage, {
     actorUserId: user.id,
@@ -1596,7 +1631,7 @@ async function apiKey(request: Request, env: Env, userId: string, rotate: boolea
   });
 
   return jsonResponse({
-    apiKey: user.apiKey,
+    apiKey: readableApiKey,
     revisionDate: user.updatedAt,
     object: 'apiKey',
   });

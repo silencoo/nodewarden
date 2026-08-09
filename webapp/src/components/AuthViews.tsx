@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
 import { AlertTriangle, ArrowLeft, Eye, EyeOff, KeyRound, LogIn, LogOut, Unlock, UserPlus } from 'lucide-preact';
-import NetworkStatusBadge from '@/components/NetworkStatusBadge';
 import StandalonePageFrame from '@/components/StandalonePageFrame';
 import { t } from '@/lib/i18n';
 import { getCurrentNetworkStatus, subscribeNetworkStatus, type NetworkStatus } from '@/lib/network-status';
@@ -125,7 +124,7 @@ export default function AuthViews(props: AuthViewsProps) {
   if (props.mode === 'locked') {
     return (
       <div className="auth-page">
-        <StandalonePageFrame title={t('txt_unlock_vault')} titleAccessory={<NetworkStatusBadge />}>
+        <StandalonePageFrame discreet title={t('txt_unlock_vault')}>
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -134,6 +133,7 @@ export default function AuthViews(props: AuthViewsProps) {
           >
             <OfflineModeNotice />
             <p className="muted standalone-muted">{props.emailForLock}</p>
+            <p className="muted standalone-muted">{t('txt_auto_lock_description')}</p>
             <input type="text" value={props.emailForLock} autoComplete="username" readOnly hidden tabIndex={-1} aria-hidden="true" />
             <PasswordField
               label={t('txt_master_password')}
@@ -197,7 +197,7 @@ export default function AuthViews(props: AuthViewsProps) {
   if (props.mode === 'register') {
     return (
       <div className="auth-page">
-        <StandalonePageFrame title={t('txt_create_account')} titleAccessory={<NetworkStatusBadge />}>
+        <StandalonePageFrame discreet title={t('txt_create_account')}>
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -281,7 +281,7 @@ export default function AuthViews(props: AuthViewsProps) {
 
   return (
     <div className="auth-page">
-      <StandalonePageFrame title={t('txt_log_in')} titleAccessory={<NetworkStatusBadge />}>
+      <StandalonePageFrame discreet title={t('txt_log_in')}>
         <form
           onSubmit={(e) => {
             e.preventDefault();

@@ -189,12 +189,9 @@ export async function handleAdminUpdateAuditLogSettings(
   if (!isAdmin(actorUser)) {
     return errorResponse('Forbidden', 403);
   }
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return errorResponse('Invalid JSON', 400);
-  }
+  const body = await readJsonBody(request);
+  const passwordError = await requireMasterPasswordHash(env, actorUser, body.masterPasswordHash);
+  if (passwordError) return passwordError;
   const storage = new StorageService(env.DB);
   const settings = await saveAuditLogSettings(storage, normalizeAuditLogSettings(body));
   await writeAuditLog(storage, actorUser.id, 'admin.audit.settings.update', 'auditLog', null, { ...settings }, request);
@@ -213,6 +210,9 @@ export async function handleAdminClearAuditLogs(
   if (!isAdmin(actorUser)) {
     return errorResponse('Forbidden', 403);
   }
+  const body = await readJsonBody(request);
+  const passwordError = await requireMasterPasswordHash(env, actorUser, body.masterPasswordHash);
+  if (passwordError) return passwordError;
   const storage = new StorageService(env.DB);
   const deleted = await storage.clearAuditLogs();
   await writeAuditLog(storage, actorUser.id, 'admin.audit.clear', 'auditLog', null, {

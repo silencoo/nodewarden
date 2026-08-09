@@ -348,7 +348,7 @@ const sv: Record<string, string> = {
   "txt_backup_error_s3_delete_failed_status": "S3-borttagning misslyckades: HTTP {status}.",
   "txt_backup_error_s3_download_failed_status": "S3-nedladdning misslyckades: HTTP {status}.",
   "txt_backup_error_s3_endpoint_required": "S3-slutpunkt krävs.",
-  "txt_backup_error_s3_endpoint_protocol": "S3-slutpunkt måste börja med http:// eller https://.",
+  "txt_backup_error_s3_endpoint_protocol": "S3-slutpunkten måste använda https://.",
   "txt_backup_error_s3_existence_check_failed_status": "S3-existenskontroll misslyckades: HTTP {status}.",
   "txt_backup_error_s3_listing_failed_status": "S3-listning misslyckades: HTTP {status}.",
   "txt_backup_error_s3_secret_key_required": "S3 Secret Key krävs.",
@@ -373,7 +373,7 @@ const sv: Record<string, string> = {
   "txt_backup_error_webdav_path_too_deep": "WebDAV fjärrsökvägen är för djup för säker bilagebatchning.",
   "txt_backup_error_webdav_upload_failed_status": "WebDAV-uppladdning misslyckades: HTTP {status}.",
   "txt_backup_error_webdav_url_required": "WebDAV-server-URL krävs.",
-  "txt_backup_error_webdav_url_protocol": "WebDAV-server-URL måste börja med http:// eller https://.",
+  "txt_backup_error_webdav_url_protocol": "WebDAV-serverns URL måste använda https://.",
   "txt_backup_error_webdav_username_required": "WebDAV-användarnamn krävs.",
   "txt_backup_destination": "Säkerhetskopieringsmål",
   "txt_backup_protocol_webdav": "WebDAV",
@@ -1463,5 +1463,21 @@ Object.assign(sv, {
 Object.assign(sv, { "txt_password_security_last_checked": "Senast kontrollerad: {value}" });
 Object.assign(sv, { "txt_no_password_risks_in_filter": "Inga lösenordsrisker i denna kategori" });
 Object.assign(sv, { "txt_password_security_show_all": "Show all", "txt_password_security_hide_all": "Hide all", "txt_password_security_jump": "Go to item", "txt_password_security_exposed_short": "Exposed {count} times", "txt_password_security_weak_short": "Weak password", "txt_password_security_reused_short": "Reused" });
+
+Object.assign(sv, {
+  "txt_backup_encrypt_export": "Kryptera exporterad ZIP",
+  "txt_backup_encrypt_remote": "Kryptera säkerhetskopian före fjärruppladdning",
+  "txt_backup_encryption_password": "Lösenord för säkerhetskopiekryptering",
+  "txt_backup_encryption_password_confirm": "Bekräfta säkerhetskopielösenord",
+  "txt_backup_encryption_password_help": "Använder AES-256 ZIP-kryptering. Förvara lösenordet utanför servern; det kan inte återställas.",
+  "txt_backup_remote_encryption_help": "Nya fjärrarkiv krypteras före uppladdning. Befintliga arkiv kräver lösenordet som användes när de skapades.",
+  "txt_backup_remote_encryption_disabled_warning": "Lagringsleverantören kan läsa säkerhetskopian. Aktivera kryptering innan du använder målet.",
+  "txt_backup_encryption_password_invalid": "Använd ett säkerhetskopielösenord på 12–1024 tecken.",
+  "txt_backup_encryption_password_mismatch": "Säkerhetskopielösenorden matchar inte.",
+  "txt_backup_encryption_mixed_archive": "Säkerhetskopian blandar krypterade och okrypterade filer och kan inte återställas säkert.",
+  "txt_backup_encryption_password_required": "Ange lösenordet för säkerhetskopiefilen.",
+  "txt_backup_file_password": "Lösenord för säkerhetskopiefil",
+  "txt_backup_file_password_help": "Detta är lösenordet som krypterade ZIP-filen, inte ditt huvudlösenord."
+});
 
 export default sv;

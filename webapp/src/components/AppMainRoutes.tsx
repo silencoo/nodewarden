@@ -160,11 +160,11 @@ export interface AppMainRoutesProps {
   onDeleteInvite: (code: string) => Promise<void>;
   onLoadAuditLogs: (filters: AuditLogFilters) => Promise<AuditLogListResult>;
   onLoadAuditLogSettings: () => Promise<AuditLogSettings>;
-  onSaveAuditLogSettings: (settings: AuditLogSettings) => Promise<AuditLogSettings>;
-  onClearAuditLogs: () => Promise<number>;
-  onExportBackup: (masterPassword: string, includeAttachments?: boolean) => Promise<void>;
-  onImportBackup: (masterPassword: string, file: File, replaceExisting?: boolean) => Promise<AdminBackupImportResponse>;
-  onImportBackupAllowingChecksumMismatch: (masterPassword: string, file: File, replaceExisting?: boolean) => Promise<AdminBackupImportResponse>;
+  onSaveAuditLogSettings: (masterPassword: string, settings: AuditLogSettings) => Promise<AuditLogSettings>;
+  onClearAuditLogs: (masterPassword: string) => Promise<number>;
+  onExportBackup: (masterPassword: string, includeAttachments?: boolean, encryptionPassword?: string) => Promise<void>;
+  onImportBackup: (masterPassword: string, file: File, replaceExisting?: boolean, backupPassword?: string) => Promise<AdminBackupImportResponse>;
+  onImportBackupAllowingChecksumMismatch: (masterPassword: string, file: File, replaceExisting?: boolean, backupPassword?: string) => Promise<AdminBackupImportResponse>;
   onLoadBackupSettings: () => Promise<AdminBackupSettings>;
   onSaveBackupSettings: (masterPassword: string, settings: AdminBackupSettings) => Promise<AdminBackupSettings>;
   onRunRemoteBackup: (masterPassword: string, destinationId?: string | null) => Promise<AdminBackupRunResponse>;

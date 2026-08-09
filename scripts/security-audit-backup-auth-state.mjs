@@ -15,12 +15,23 @@ const forbiddenRuntimeTables = [
   'used_attachment_download_tokens',
 ];
 
+const tableSqlPatterns = new Map([
+  ['devices', /\b(?:from|into|table)\s+["']?devices\b/i],
+  ['refresh_tokens', /\b(?:from|into|table)\s+["']?refresh_tokens\b/i],
+  ['auth_requests', /\b(?:from|into|table)\s+["']?auth_requests\b/i],
+  ['trusted_two_factor_device_tokens', /\b(?:from|into|table)\s+["']?trusted_two_factor_device_tokens\b/i],
+  ['account_passkey_challenges', /\b(?:from|into|table)\s+["']?account_passkey_challenges\b/i],
+  ['used_attachment_download_tokens', /\b(?:from|into|table)\s+["']?used_attachment_download_tokens\b/i],
+]);
+
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
 function sqlTouchesTable(sql, table) {
-  return new RegExp(`\\b(?:from|into|table)\\s+[\"']?${table}\\b`, 'i').test(sql);
+  const pattern = tableSqlPatterns.get(table);
+  if (!pattern) throw new Error(`Unknown runtime table: ${table}`);
+  return pattern.test(sql);
 }
 
 function emptyBackupDb(extra = {}) {

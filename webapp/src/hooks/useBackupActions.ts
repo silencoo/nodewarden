@@ -6,6 +6,7 @@ import {
   downloadRemoteBackup as fetchRemoteBackupPayload,
   getAdminBackupSettings,
   importAdminBackup,
+  encryptAdminBackupExportPayload,
   inspectRemoteBackupIntegrity,
   listRemoteBackups,
   restoreRemoteBackup as restoreRemoteBackupRequest,
@@ -27,8 +28,8 @@ export default function useBackupActions(options: UseBackupActionsOptions) {
 
   return useMemo(
     () => ({
-      async exportBackup(masterPasswordHash: string, includeAttachments: boolean = false) {
-        const payload = await buildCompleteAdminBackupExport(
+      async exportBackup(masterPasswordHash: string, includeAttachments: boolean = false, encryptionPassword: string = '') {
+        let payload = await buildCompleteAdminBackupExport(
           authedFetch,
           masterPasswordHash,
           includeAttachments,
@@ -36,6 +37,9 @@ export default function useBackupActions(options: UseBackupActionsOptions) {
             dispatchBackupProgress(event);
           }
         );
+        if (encryptionPassword) {
+          payload = await encryptAdminBackupExportPayload(payload, encryptionPassword);
+        }
         downloadBytesAsFile(payload.bytes, payload.fileName, payload.mimeType);
         dispatchBackupProgress({
           operation: 'backup-export',
@@ -49,14 +53,14 @@ export default function useBackupActions(options: UseBackupActionsOptions) {
         });
       },
 
-      async importBackup(masterPasswordHash: string, file: File, replaceExisting: boolean = false) {
-        const result = await importAdminBackup(authedFetch, masterPasswordHash, file, replaceExisting);
+      async importBackup(masterPasswordHash: string, file: File, replaceExisting: boolean = false, backupPassword: string = '') {
+        const result = await importAdminBackup(authedFetch, masterPasswordHash, file, replaceExisting, false, backupPassword);
         onImported?.();
         return result;
       },
 
-      async importBackupAllowingChecksumMismatch(masterPasswordHash: string, file: File, replaceExisting: boolean = false) {
-        const result = await importAdminBackup(authedFetch, masterPasswordHash, file, replaceExisting, true);
+      async importBackupAllowingChecksumMismatch(masterPasswordHash: string, file: File, replaceExisting: boolean = false, backupPassword: string = '') {
+        const result = await importAdminBackup(authedFetch, masterPasswordHash, file, replaceExisting, true, backupPassword);
         onImported?.();
         return result;
       },

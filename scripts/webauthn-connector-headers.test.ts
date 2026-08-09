@@ -17,9 +17,19 @@ test('only the iframe connector drops anti-framing headers', () => {
 
   for (const path of ['/', '/webauthn-fallback-connector.html', '/webauthn-mobile-connector.html']) {
     const request = new Request(`https://vault.example.test${path}`);
-    const response = applyCors(request, new Response('<!doctype html>'), env);
+    const response = applyCors(request, new Response('<!doctype html>', {
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    }), env);
     assert.equal(response.headers.get('X-Frame-Options'), 'DENY');
-    assert.match(response.headers.get('Content-Security-Policy') || '', /frame-ancestors 'none'/);
+    const policy = response.headers.get('Content-Security-Policy') || '';
+    assert.match(policy, /frame-ancestors 'none'/);
+    assert.match(policy, /script-src 'self'/);
+    assert.doesNotMatch(policy, /script-src[^;]*'unsafe-inline'/);
+    assert.match(policy, /connect-src 'self' wss:\/\/vault\.example\.test https:\/\/api\.pwnedpasswords\.com/);
+    assert.equal(response.headers.get('Referrer-Policy'), 'no-referrer');
+    assert.equal(response.headers.get('Strict-Transport-Security'), 'max-age=31536000');
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+    assert.match(response.headers.get('Permissions-Policy') || '', /geolocation=\(\)/);
   }
 });
 

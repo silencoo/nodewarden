@@ -1,7 +1,8 @@
 import type { Env, User } from '../types';
 import { KV_MAX_OBJECT_BYTES, deleteBlobObject, getAttachmentObjectKey, getBlobStorageKind, putBlobObject } from './blob-store';
 import { BACKUP_SETTINGS_CONFIG_KEY, normalizeImportedBackupSettingsValue } from './backup-config';
-import { YUBICO_BOOTSTRAP_CLAIM_CONFIG_KEY } from './yubico-config';
+import { YUBICO_BOOTSTRAP_CLAIM_CONFIG_KEY, isYubicoCredentialConfigKey } from './yubico-config';
+import { isPushCredentialConfigKey } from './push-relay';
 import {
   type BackupManifestAttachmentBlob,
   type BackupPayload,
@@ -95,18 +96,25 @@ async function getTableCreateSql(db: D1Database, table: BackupTableName): Promis
 }
 
 function buildShadowTableCreateSql(createSql: string, table: BackupTableName): string {
-  const tablePattern = new RegExp(`^CREATE TABLE(?:\\s+IF NOT EXISTS)?\\s+(?:\"${table}\"|${table})(?=\\s*\\()`, 'i');
-  let next = createSql.replace(tablePattern, `CREATE TABLE "${shadowTableName(table)}"`);
-  if (next === createSql) {
+  const tableMatch = createSql.match(
+    /^CREATE TABLE(?:\s+IF NOT EXISTS)?\s+(?:"([A-Za-z_][A-Za-z0-9_]*)"|([A-Za-z_][A-Za-z0-9_]*))(?=\s*\()/i
+  );
+  const sourceTable = String(tableMatch?.[1] || tableMatch?.[2] || '').toLowerCase();
+  if (!tableMatch || sourceTable !== table.toLowerCase()) {
     throw new Error(`Restore shadow schema could not rewrite CREATE TABLE statement for ${table}`);
   }
-  for (const currentTable of BACKUP_TABLES) {
-    const referencePattern = new RegExp(`\\bREFERENCES\\s+(?:\"${currentTable}\"|${currentTable})(?=\\s*\\()`, 'gi');
-    next = next.replace(
-      referencePattern,
-      `REFERENCES "${shadowTableName(currentTable)}"`
-    );
-  }
+  const nextTableName = `CREATE TABLE "${shadowTableName(table)}"`;
+  let next = `${nextTableName}${createSql.slice(tableMatch[0].length)}`;
+  const backupTableNames = new Set<string>(BACKUP_TABLES);
+  next = next.replace(
+    /\bREFERENCES\s+(?:"([A-Za-z_][A-Za-z0-9_]*)"|([A-Za-z_][A-Za-z0-9_]*))(?=\s*\()/gi,
+    (match, quotedName: string | undefined, bareName: string | undefined) => {
+      const referencedTable = String(quotedName || bareName || '').toLowerCase();
+      return backupTableNames.has(referencedTable)
+        ? `REFERENCES "${shadowTableName(referencedTable as BackupTableName)}"`
+        : match;
+    }
+  );
   return next;
 }
 
@@ -276,7 +284,12 @@ async function prepareImportedConfigRows(
   userRows: SqlRow[]
 ): Promise<SqlRow[]> {
   let nextConfigRows = cloneRows(configRows || []).filter(
-    (row) => String(row.key || '').trim() !== YUBICO_BOOTSTRAP_CLAIM_CONFIG_KEY
+    (row) => {
+      const key = String(row.key || '').trim();
+      return key !== YUBICO_BOOTSTRAP_CLAIM_CONFIG_KEY
+        && !isYubicoCredentialConfigKey(key)
+        && !isPushCredentialConfigKey(key);
+    }
   );
   const rawBackupSettings = nextConfigRows.find((row) => String(row.key || '').trim() === BACKUP_SETTINGS_CONFIG_KEY);
   const normalizedBackupSettings = await normalizeImportedBackupSettingsValue(

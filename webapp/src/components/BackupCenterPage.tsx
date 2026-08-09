@@ -32,12 +32,17 @@ import { t } from '@/lib/i18n';
 import { BackupDestinationDetail } from './backup-center/BackupDestinationDetail';
 import { BackupDestinationSidebar } from './backup-center/BackupDestinationSidebar';
 import { BackupOperationsSidebar } from './backup-center/BackupOperationsSidebar';
+import {
+  getBackupZipEncryptionState,
+  validateBackupEncryptionPassword,
+  type BackupZipEncryptionState,
+} from '@shared/backup-encryption';
 
 interface BackupCenterPageProps {
   currentUserId: string | null;
-  onExport: (masterPassword: string, includeAttachments?: boolean) => Promise<void>;
-  onImport: (masterPassword: string, file: File, replaceExisting?: boolean) => Promise<AdminBackupImportResponse>;
-  onImportAllowingChecksumMismatch: (masterPassword: string, file: File, replaceExisting?: boolean) => Promise<AdminBackupImportResponse>;
+  onExport: (masterPassword: string, includeAttachments?: boolean, encryptionPassword?: string) => Promise<void>;
+  onImport: (masterPassword: string, file: File, replaceExisting?: boolean, backupPassword?: string) => Promise<AdminBackupImportResponse>;
+  onImportAllowingChecksumMismatch: (masterPassword: string, file: File, replaceExisting?: boolean, backupPassword?: string) => Promise<AdminBackupImportResponse>;
   onLoadSettings: () => Promise<AdminBackupSettings>;
   onSaveSettings: (masterPassword: string, settings: AdminBackupSettings) => Promise<AdminBackupSettings>;
   onRunRemoteBackup: (masterPassword: string, destinationId?: string | null) => Promise<AdminBackupRunResponse>;
@@ -184,8 +189,13 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
   const restoreProgressPendingRef = useRef<BackupProgressState | null>(null);
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFileEncryptionState, setSelectedFileEncryptionState] = useState<BackupZipEncryptionState | null>(null);
+  const [localImportBackupPassword, setLocalImportBackupPassword] = useState('');
   const [exporting, setExporting] = useState(false);
   const [exportIncludeAttachments, setExportIncludeAttachments] = useState(false);
+  const [exportEncryptionEnabled, setExportEncryptionEnabled] = useState(true);
+  const [exportEncryptionPassword, setExportEncryptionPassword] = useState('');
+  const [exportEncryptionPasswordConfirmation, setExportEncryptionPasswordConfirmation] = useState('');
   const [importing, setImporting] = useState(false);
   const [loadingSettings, setLoadingSettings] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -213,6 +223,7 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
   const [pendingRemoteDeletePath, setPendingRemoteDeletePath] = useState('');
   const [savedSettings, setSavedSettings] = useState<AdminBackupSettings | null>(null);
   const [settings, setSettings] = useState<AdminBackupSettings>(createDraftBackupSettings);
+  const [destinationEncryptionConfirmations, setDestinationEncryptionConfirmations] = useState<Record<string, string>>({});
   const [selectedDestinationId, setSelectedDestinationId] = useState<string | null>(persistedRemoteState.selectedDestinationId);
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [remoteBrowserCache, setRemoteBrowserCache] = useState<Record<string, RemoteBackupBrowserResponse>>(persistedRemoteState.cache);
@@ -281,6 +292,9 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
         if (cancelled) return;
         setSavedSettings(loaded);
         setSettings(loaded);
+        setDestinationEncryptionConfirmations(Object.fromEntries(
+          loaded.destinations.map((destination) => [destination.id, destination.encryption?.password || ''])
+        ));
         const nextSelectedDestinationId =
           (persistedRemoteState.selectedDestinationId
             && getVisibleDestinations(loaded).some((destination) => destination.id === persistedRemoteState.selectedDestinationId)
@@ -455,6 +469,8 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
 
   function resetSelectedFile() {
     setSelectedFile(null);
+    setSelectedFileEncryptionState(null);
+    setLocalImportBackupPassword('');
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
@@ -522,6 +538,10 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
   function handleAddDestination(type: BackupDestinationType) {
     updateSettings((current) => {
       const nextDestination = createDraftDestinationRecord(type, current.destinations.filter((destination) => destination.type === type).length + 1);
+      setDestinationEncryptionConfirmations((confirmations) => ({
+        ...confirmations,
+        [nextDestination.id]: '',
+      }));
       setSelectedProviderId(null);
       setSelectedDestinationId(nextDestination.id);
       return {
@@ -561,6 +581,9 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
       setRemoteBrowserPathByDestination((current) => Object.fromEntries(Object.entries(current).filter(([key]) => key !== destinationIdToDelete)));
       setRemoteBrowserPageByKey((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${destinationIdToDelete}:`))));
       setRemoteBrowserRefreshedAt((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${destinationIdToDelete}:`))));
+      setDestinationEncryptionConfirmations((current) => Object.fromEntries(
+        Object.entries(current).filter(([key]) => key !== destinationIdToDelete)
+      ));
       setSelectedDestinationId(nextSelected);
       setConfirmDeleteDestinationOpen(false);
       props.onNotify('success', t('txt_backup_destination_deleted'));
@@ -575,6 +598,22 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
 
   async function handleExport() {
     if (exporting) return;
+    if (exportEncryptionEnabled) {
+      try {
+        validateBackupEncryptionPassword(exportEncryptionPassword);
+      } catch {
+        const message = t('txt_backup_encryption_password_invalid');
+        setLocalError(message);
+        props.onNotify('error', message);
+        return;
+      }
+      if (exportEncryptionPassword !== exportEncryptionPasswordConfirmation) {
+        const message = t('txt_backup_encryption_password_mismatch');
+        setLocalError(message);
+        props.onNotify('error', message);
+        return;
+      }
+    }
     openBackupPasswordPrompt({ action: 'export' });
   }
 
@@ -583,7 +622,13 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
     setExporting(true);
     try {
       startRestoreProgress('backup-export', t('txt_backup_export'), { source: 'local', includeAttachments: exportIncludeAttachments });
-      await props.onExport(masterPassword, exportIncludeAttachments);
+      await props.onExport(
+        masterPassword,
+        exportIncludeAttachments,
+        exportEncryptionEnabled ? exportEncryptionPassword : ''
+      );
+      setExportEncryptionPassword('');
+      setExportEncryptionPasswordConfirmation('');
       props.onNotify('success', t('txt_backup_export_success'));
       return true;
     } catch (error) {
@@ -641,8 +686,8 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
         delayMs: replaceExisting ? 480 : 1400,
       });
       const result = allowChecksumMismatch
-        ? await props.onImportAllowingChecksumMismatch(masterPassword, selectedFile, replaceExisting)
-        : await props.onImport(masterPassword, selectedFile, replaceExisting);
+        ? await props.onImportAllowingChecksumMismatch(masterPassword, selectedFile, replaceExisting, localImportBackupPassword)
+        : await props.onImport(masterPassword, selectedFile, replaceExisting, localImportBackupPassword);
       props.onNotify('success', `${buildIntegrityStatusMessage(integrity)} ${t('txt_backup_restore_success_relogin')}`);
       const skippedMessage = buildSkippedImportMessage(result);
       if (skippedMessage) props.onNotify('warning', skippedMessage);
@@ -668,6 +713,26 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
 
   async function handleSaveSettings() {
     if (savingSettings) return;
+    if (selectedDestination?.encryption.enabled) {
+      const password = selectedDestination.encryption.password;
+      const confirmation = destinationEncryptionConfirmations[selectedDestination.id] || '';
+      if (password !== '********') {
+        try {
+          validateBackupEncryptionPassword(password);
+        } catch {
+          const message = t('txt_backup_encryption_password_invalid');
+          setLocalError(message);
+          props.onNotify('error', message);
+          return;
+        }
+      }
+      if (password !== confirmation) {
+        const message = t('txt_backup_encryption_password_mismatch');
+        setLocalError(message);
+        props.onNotify('error', message);
+        return;
+      }
+    }
     openBackupPasswordPrompt({ action: 'saveSettings' });
   }
 
@@ -683,6 +748,13 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
         || getFirstVisibleDestinationId(saved)
         || null;
       setSavedSettings(saved);
+      setDestinationEncryptionConfirmations((current) => ({
+        ...current,
+        ...Object.fromEntries(saved.destinations.map((destination) => [
+          destination.id,
+          destination.encryption?.password || '',
+        ])),
+      }));
       applySavedDestinationToDrafts(saved, nextSelected);
       if (destinationIdToInvalidate) {
         setRemoteBrowserCache((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${destinationIdToInvalidate}:`))));
@@ -729,6 +801,9 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
       const result = await props.onRunRemoteBackup(masterPassword, selectedDestination.id);
       setSavedSettings(result.settings);
       setSettings(result.settings);
+      setDestinationEncryptionConfirmations(Object.fromEntries(
+        result.settings.destinations.map((destination) => [destination.id, destination.encryption?.password || ''])
+      ));
       setSelectedDestinationId(selectedDestination.id);
       await loadRemoteBrowser(selectedDestination.id, currentRemoteBrowserPath, { force: true });
       props.onNotify('success', t('txt_backup_remote_run_success_verified', { name: result.result.fileName }));
@@ -797,6 +872,11 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
     if (!nextFile) return;
 
     try {
+      const encryptionState = await getBackupZipEncryptionState(new Uint8Array(await nextFile.arrayBuffer()));
+      if (encryptionState === 'mixed') {
+        throw new Error(t('txt_backup_encryption_mixed_archive'));
+      }
+      setSelectedFileEncryptionState(encryptionState);
       const integrity = await inspectLocalBackupFile(nextFile);
       if (!integrity.matches) {
         setPendingRestoreIntegrity({
@@ -810,6 +890,7 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
       setConfirmLocalRestoreOpen(true);
     } catch (error) {
       const message = error instanceof Error ? error.message : t('txt_backup_integrity_check_failed');
+      resetSelectedFile();
       setLocalError(message);
       props.onNotify('error', message);
     }
@@ -907,6 +988,14 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
       setBackupPasswordError(t('txt_master_password_is_required'));
       return;
     }
+    if (request.action === 'import' && selectedFileEncryptionState === 'encrypted') {
+      try {
+        validateBackupEncryptionPassword(localImportBackupPassword);
+      } catch {
+        setBackupPasswordError(t('txt_backup_encryption_password_required'));
+        return;
+      }
+    }
     setBackupPasswordSubmitting(true);
     setBackupPasswordError('');
     let succeeded = false;
@@ -957,12 +1046,18 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
         exporting={exporting}
         importing={importing}
         exportIncludeAttachments={exportIncludeAttachments}
+        exportEncryptionEnabled={exportEncryptionEnabled}
+        exportEncryptionPassword={exportEncryptionPassword}
+        exportEncryptionPasswordConfirmation={exportEncryptionPasswordConfirmation}
         selectedProviderId={selectedProviderId}
         recommendedWebDavProviders={recommendedWebDavProviders}
         recommendedS3Providers={recommendedS3Providers}
         onExport={() => void handleExport()}
         onImport={() => fileInputRef.current?.click()}
         onExportIncludeAttachmentsChange={setExportIncludeAttachments}
+        onExportEncryptionEnabledChange={setExportEncryptionEnabled}
+        onExportEncryptionPasswordChange={setExportEncryptionPassword}
+        onExportEncryptionPasswordConfirmationChange={setExportEncryptionPasswordConfirmation}
         onSelectProvider={(providerId) => setSelectedProviderId(providerId)}
       />
 
@@ -999,11 +1094,21 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
         downloadingRemotePercent={downloadingRemotePercent}
         restoringRemotePath={restoringRemotePath}
         deletingRemotePath={deletingRemotePath}
+        encryptionPasswordConfirmation={
+          selectedDestination ? destinationEncryptionConfirmations[selectedDestination.id] || '' : ''
+        }
         onSaveSettings={() => void handleSaveSettings()}
         onToggleSchedule={handleToggleSelectedSchedule}
         onRunRemoteBackup={() => void handleRunRemoteBackup()}
         onPromptDeleteDestination={() => setConfirmDeleteDestinationOpen(true)}
         onUpdateDestination={updateSelectedDestination}
+        onEncryptionPasswordConfirmationChange={(value) => {
+          if (!selectedDestination) return;
+          setDestinationEncryptionConfirmations((current) => ({
+            ...current,
+            [selectedDestination.id]: value,
+          }));
+        }}
         onRefreshRemoteBrowser={() => {
           if (savedSelectedDestination) {
             void loadRemoteBrowser(savedSelectedDestination.id, currentRemoteBrowserPath, { force: true });
@@ -1074,7 +1179,13 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
         message={t('txt_enter_master_password_to_continue')}
         confirmText={t('txt_continue')}
         cancelText={t('txt_cancel')}
-        confirmDisabled={backupPasswordSubmitting || !backupPasswordValue.trim()}
+        confirmDisabled={
+          backupPasswordSubmitting
+          || !backupPasswordValue.trim()
+          || (pendingBackupVerification?.action === 'import'
+            && selectedFileEncryptionState === 'encrypted'
+            && !localImportBackupPassword.trim())
+        }
         cancelDisabled={backupPasswordSubmitting}
         onConfirm={() => void submitBackupPasswordPrompt()}
         onCancel={() => {
@@ -1103,6 +1214,23 @@ export default function BackupCenterPage(props: BackupCenterPageProps) {
             <div id="backup-master-password-error" className="local-error" role="alert">{backupPasswordError}</div>
           ) : null}
         </label>
+        {pendingBackupVerification?.action === 'import' && selectedFileEncryptionState === 'encrypted' ? (
+          <label className="field">
+            <span>{t('txt_backup_file_password')}</span>
+            <input
+              id="backup-file-password"
+              className="input"
+              type="password"
+              autoComplete="off"
+              value={localImportBackupPassword}
+              onInput={(event) => {
+                setLocalImportBackupPassword((event.currentTarget as HTMLInputElement).value);
+                if (backupPasswordError) setBackupPasswordError('');
+              }}
+            />
+            <div className="field-help">{t('txt_backup_file_password_help')}</div>
+          </label>
+        ) : null}
       </ConfirmDialog>
 
       <ConfirmDialog

@@ -128,6 +128,7 @@ const APP_ROUTE_PATHS = [
 ] as const;
 const AUTH_ROUTES: ReadonlySet<string> = new Set(AUTH_ROUTE_PATHS);
 const APP_ROUTES: ReadonlySet<string> = new Set(APP_ROUTE_PATHS);
+const PRIVATE_ENTRY_ROUTE_PATTERN = /^\/[A-Za-z0-9_-]{16,128}$/;
 
 function isAdminProfile(profile: Profile | null): profile is Profile {
   return String(profile?.role || '').toLowerCase() === 'admin';
@@ -581,7 +582,12 @@ export default function App() {
     setPasskeyPassword('');
     setUnlockPassword('');
     setPhase('app');
-    if (location === '/' || location === '/login' || location === '/register' || location === '/lock') {
+    const loginLocation = normalizeRoutePath(location);
+    if (PRIVATE_ENTRY_ROUTE_PATTERN.test(loginLocation)) {
+      // The entry path is only a gate. Once authentication succeeds, remove it
+      // from both the address bar and browser history.
+      navigate('/vault', { replace: true });
+    } else if (loginLocation === '/' || loginLocation === '/login' || loginLocation === '/register' || loginLocation === '/lock') {
       navigate('/vault');
     }
     void (async () => {
@@ -1674,17 +1680,20 @@ export default function App() {
       reconnectAttempts += 1;
       reconnectTimer = window.setTimeout(() => {
         reconnectTimer = null;
-        connect();
+        void connect();
       }, delay);
     };
 
-    const connect = () => {
+    const connect = async () => {
       if (disposed) return;
-      const accessToken = session.accessToken;
-      if (!accessToken) return;
       try {
+        const negotiateResponse = await authedFetch('/notifications/hub/negotiate', { method: 'POST' });
+        if (!negotiateResponse.ok) throw new Error('Notification negotiation failed');
+        const negotiated = await negotiateResponse.json() as { connectionToken?: string };
+        const connectionToken = String(negotiated.connectionToken || '').trim();
+        if (!connectionToken || disposed) throw new Error('Notification connection token is unavailable');
         const hubUrl = new URL('/notifications/hub', window.location.origin);
-        hubUrl.searchParams.set('access_token', accessToken);
+        hubUrl.searchParams.set('connection_token', connectionToken);
         hubUrl.protocol = hubUrl.protocol === 'https:' ? 'wss:' : 'ws:';
         socket = new WebSocket(hubUrl.toString());
       } catch {
@@ -1809,7 +1818,7 @@ export default function App() {
       });
     };
 
-    connect();
+    void connect();
 
     return () => {
       disposed = true;
@@ -1828,7 +1837,7 @@ export default function App() {
         }
       }
     };
-  }, [phase, session?.accessToken, session?.symEncKey, session?.symMacKey, vaultInitialDecryptDone]);
+  }, [phase, session?.accessToken, session?.symEncKey, session?.symMacKey, vaultInitialDecryptDone, authedFetch]);
 
   const vaultSendActions = useVaultSendActions({
     authedFetch,
@@ -1925,8 +1934,11 @@ export default function App() {
   const isRecoverTwoFactorRoute = effectiveLocation === '/recover-2fa';
   const isPublicSendRoute = !!publicSendMatch;
   const isMalformedSendRoute = /^\/send(?:\/|$)/i.test(effectiveLocation) && !publicSendMatch;
-  const isKnownAuthRoute = AUTH_ROUTES.has(routeLocation) || isPublicSendRoute || isRecoverTwoFactorRoute;
-  const isKnownAppRoute = APP_ROUTES.has(routeLocation) || isPublicSendRoute || isImportHashRoute;
+  // The server only serves this route shape when the mandatory private-entry
+  // gate has succeeded. It remains a valid auth route until login completes.
+  const isPrivateEntryRoute = PRIVATE_ENTRY_ROUTE_PATTERN.test(routeLocation);
+  const isKnownAuthRoute = AUTH_ROUTES.has(routeLocation) || isPrivateEntryRoute || isPublicSendRoute || isRecoverTwoFactorRoute;
+  const isKnownAppRoute = APP_ROUTES.has(routeLocation) || isPrivateEntryRoute || isPublicSendRoute || isImportHashRoute;
   const isUnknownRoute = isMalformedSendRoute || (phase === 'app' ? !isKnownAppRoute : !isKnownAuthRoute && !APP_ROUTES.has(routeLocation));
   const isImportRoute = routeLocation === IMPORT_ROUTE || IMPORT_ROUTE_ALIASES.has(routeLocation);
   const showSidebarToggle = mobileLayout && location === '/sends';
@@ -1987,6 +1999,10 @@ export default function App() {
   useEffect(() => {
     if (phase === 'app' && location === '/' && !isPublicSendRoute) navigate('/vault');
   }, [phase, location, isPublicSendRoute, navigate]);
+
+  useEffect(() => {
+    if (phase === 'app' && isPrivateEntryRoute) navigate('/vault', { replace: true });
+  }, [phase, isPrivateEntryRoute, navigate]);
 
   useEffect(() => {
     if (phase === 'register' && (location === '/' || location === '/login') && !isPublicSendRoute) {
@@ -2138,19 +2154,25 @@ export default function App() {
     onDeleteInvite: adminActions.deleteInvite,
     onLoadAuditLogs: (filters: AuditLogFilters) => listAuditLogs(authedFetch, filters),
     onLoadAuditLogSettings: () => getAuditLogSettings(authedFetch),
-    onSaveAuditLogSettings: (settings: AuditLogSettings) => saveAuditLogSettings(authedFetch, settings),
-    onClearAuditLogs: () => clearAuditLogs(authedFetch),
-    onExportBackup: async (masterPassword: string, includeAttachments?: boolean) => {
+    onSaveAuditLogSettings: async (masterPassword: string, settings: AuditLogSettings) => {
       const hash = await deriveCurrentMasterPasswordHash(masterPassword);
-      return backupActions.exportBackup(hash, includeAttachments);
+      return saveAuditLogSettings(authedFetch, settings, hash);
     },
-    onImportBackup: async (masterPassword: string, file: File, replaceExisting?: boolean) => {
+    onClearAuditLogs: async (masterPassword: string) => {
       const hash = await deriveCurrentMasterPasswordHash(masterPassword);
-      return backupActions.importBackup(hash, file, replaceExisting);
+      return clearAuditLogs(authedFetch, hash);
     },
-    onImportBackupAllowingChecksumMismatch: async (masterPassword: string, file: File, replaceExisting?: boolean) => {
+    onExportBackup: async (masterPassword: string, includeAttachments?: boolean, encryptionPassword?: string) => {
       const hash = await deriveCurrentMasterPasswordHash(masterPassword);
-      return backupActions.importBackupAllowingChecksumMismatch(hash, file, replaceExisting);
+      return backupActions.exportBackup(hash, includeAttachments, encryptionPassword);
+    },
+    onImportBackup: async (masterPassword: string, file: File, replaceExisting?: boolean, backupPassword?: string) => {
+      const hash = await deriveCurrentMasterPasswordHash(masterPassword);
+      return backupActions.importBackup(hash, file, replaceExisting, backupPassword);
+    },
+    onImportBackupAllowingChecksumMismatch: async (masterPassword: string, file: File, replaceExisting?: boolean, backupPassword?: string) => {
+      const hash = await deriveCurrentMasterPasswordHash(masterPassword);
+      return backupActions.importBackupAllowingChecksumMismatch(hash, file, replaceExisting, backupPassword);
     },
     onLoadBackupSettings: () => queryClient.ensureQueryData({
       queryKey: ['admin-backup-settings', vaultCacheKey],

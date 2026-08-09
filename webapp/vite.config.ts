@@ -6,24 +6,22 @@ import { defineConfig, type Plugin } from 'vite';
 
 const rootDir = fileURLToPath(new URL('.', import.meta.url));
 
-function buildServiceWorkerSource(precacheUrls: string[], version: string): string {
+export function buildServiceWorkerSource(precacheUrls: string[], version: string): string {
   return `const CACHE_VERSION = ${JSON.stringify(`nodewarden-pwa-${version}`)};
 const APP_SHELL_CACHE = \`\${CACHE_VERSION}-shell\`;
 const RUNTIME_CACHE = 'nodewarden-pwa-runtime-v1';
 
 const PRECACHE_URLS = ${JSON.stringify(precacheUrls, null, 2)};
-const CRITICAL_SHELL_URLS = ['/', '/index.html'];
 const STATIC_PATH_RE = /^\\/(?:assets\\/|payment-logos\\/|icon-|logo-|favicon|apple-touch-icon|nodewarden-|manifest\\.webmanifest$)/;
 const NEVER_CACHE_PATH_RE = /^\\/(?:api|identity|setup|config|notifications|icons|\\.well-known|cdn-cgi)(?:\\/|$)/;
+const PRIVATE_ENTRY_PATH_RE = /^\\/[A-Za-z0-9_-]{16,128}$/;
 const OFFLINE_FALLBACK_HTML = '<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>NodeWarden</title><style>html,body{height:100%;margin:0;background:#eef4ff;color:#0f172a;font-family:ui-sans-serif,system-ui,sans-serif}.boot-screen{min-height:100%;display:grid;place-items:center;padding:24px;box-sizing:border-box}.boot-card{width:min(420px,100%);display:grid;gap:12px;justify-items:center;padding:28px;border:1px solid rgba(148,163,184,.35);border-radius:22px;background:rgba(255,255,255,.86);box-shadow:0 20px 45px rgba(15,23,42,.1)}.boot-logo{width:74px;height:58px;object-fit:contain}.boot-title{font-weight:700}.boot-sub{color:#475569;text-align:center;font-size:14px;line-height:1.5}</style></head><body><div class="boot-screen"><div class="boot-card"><img class="boot-logo" src="/nodewarden-logo.svg" alt=""><div class="boot-title">NodeWarden</div><div class="boot-sub">Offline cache is not ready on this device. Open NodeWarden once while online, then try offline again.</div></div></div></body></html>';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(APP_SHELL_CACHE)
       .then(async (cache) => {
-        await cache.addAll(CRITICAL_SHELL_URLS);
-        const nonCriticalUrls = PRECACHE_URLS.filter((url) => !CRITICAL_SHELL_URLS.includes(url));
-        await Promise.allSettled(nonCriticalUrls.map((url) => cache.add(url)));
+        await Promise.allSettled(PRECACHE_URLS.map((url) => cache.add(url)));
       })
       .then(() => self.skipWaiting())
   );
@@ -56,7 +54,6 @@ async function refreshNavigationCache(request) {
   try {
     const response = await fetch(request);
     if (isCacheableResponse(response)) {
-      await cache.put('/', response.clone());
       await cache.put('/index.html', response.clone());
       await warmStaticDependencies(response.clone());
     }
@@ -93,13 +90,31 @@ async function appShellNavigation(request) {
   return (
     (await cache.match(request, { ignoreSearch: true }))
     || (await cache.match(url.pathname, { ignoreSearch: true }))
-    || (await cache.match('/'))
     || (await cache.match('/index.html'))
     || new Response(OFFLINE_FALLBACK_HTML, {
       status: 200,
       headers: { 'Content-Type': 'text/html; charset=UTF-8' },
     })
   );
+}
+
+async function networkFirstNavigation(request) {
+  const url = new URL(request.url);
+  const response = await refreshNavigationCache(request);
+  if (response) return response;
+
+  // Never resurrect the conventional root login screen from an old cache.
+  if (url.pathname === '/' || url.pathname.toLowerCase() === '/index.html') {
+    return new Response('Not Found', {
+      status: 404,
+      headers: {
+        'Cache-Control': 'no-store, max-age=0',
+        'Content-Type': 'text/plain; charset=UTF-8',
+      },
+    });
+  }
+
+  return appShellNavigation(request);
 }
 
 async function connectorNavigation(request) {
@@ -167,6 +182,11 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
   if (NEVER_CACHE_PATH_RE.test(url.pathname)) return;
 
+  // The private entry performs a one-time same-URL redirect to set an HttpOnly
+  // cookie. Let the browser handle that redirect natively: following it from a
+  // Service Worker fetch can repeat before the new cookie becomes observable.
+  if (request.mode === 'navigate' && PRIVATE_ENTRY_PATH_RE.test(url.pathname)) return;
+
   // Connector navigations are protocol pages, not application routes. They must
   // never be replaced with the SPA shell, even when the device is offline.
   if (url.pathname.endsWith('-connector.html')) {
@@ -175,10 +195,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (request.mode === 'navigate') {
-    event.respondWith(appShellNavigation(request));
-    if (navigator.onLine !== false) {
-      event.waitUntil(refreshNavigationCache(request));
-    }
+    event.respondWith(networkFirstNavigation(request));
     return;
   }
 
@@ -191,7 +208,7 @@ self.addEventListener('fetch', (event) => {
 
 function buildCacheVersion(isDemo: boolean, urls: string[]): string {
   const digest = createHash('sha256')
-    .update(`${isDemo ? 'demo' : 'app'}\n${urls.join('\n')}`)
+    .update(`private-entry-v2\n${isDemo ? 'demo' : 'app'}\n${urls.join('\n')}`)
     .digest('hex')
     .slice(0, 16);
   return `${isDemo ? 'demo' : 'app'}-${digest}`;
@@ -202,8 +219,6 @@ function pwaServiceWorkerPlugin(isDemo: boolean): Plugin {
     name: 'nodewarden-pwa-service-worker',
     generateBundle(_, bundle) {
       const urls = new Set<string>([
-        '/',
-        '/index.html',
         '/vault',
         '/manifest.webmanifest',
         '/nodewarden-logo.svg',

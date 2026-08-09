@@ -1,5 +1,12 @@
 import { handleGetApiKey, handleRotateApiKey } from '../src/handlers/accounts.ts';
-import { hashApiKey, verifyApiKey } from '../src/utils/api-key.ts';
+import {
+  encryptApiKey,
+  hashApiKey,
+  isStoredApiKeyEncrypted,
+  verifyApiKey,
+} from '../src/utils/api-key.ts';
+
+const jwtSecret = 'test-secret-at-least-thirty-two-characters';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -89,7 +96,7 @@ function request() {
 }
 
 function env(db) {
-  return { DB: db, JWT_SECRET: 'test-secret-at-least-thirty-two-characters' };
+  return { DB: db, JWT_SECRET: jwtSecret };
 }
 
 const view = createDb('ExistingReadableApiKey1234567');
@@ -97,20 +104,32 @@ const viewResponse = await handleGetApiKey(request(), env(view.db), 'user-1');
 const viewBody = await viewResponse.json();
 assert(viewResponse.status === 200, 'Viewing an existing readable API key failed');
 assert(viewBody.apiKey === 'ExistingReadableApiKey1234567', 'View did not return the existing API key');
-assert(view.state.userWrites === 0, 'View unexpectedly rewrote the user');
+assert(view.state.userWrites === 1, 'Readable API key was not migrated to encrypted storage');
+assert(isStoredApiKeyEncrypted(view.state.user.api_key), 'Migrated API key is not encrypted at rest');
+assert(
+  await verifyApiKey(viewBody.apiKey, view.state.user.api_key, jwtSecret, 'user-1'),
+  'Migrated API key does not authenticate'
+);
 assert(view.state.refreshDeletes === 0, 'View unexpectedly revoked refresh tokens');
 assert(view.state.auditActions.includes('account.api_key.view'), 'View audit action is missing');
+
+const encryptedValue = await encryptApiKey('ExistingEncryptedApiKey12345', jwtSecret, 'user-1');
+const encryptedView = createDb(encryptedValue);
+const encryptedViewResponse = await handleGetApiKey(request(), env(encryptedView.db), 'user-1');
+const encryptedViewBody = await encryptedViewResponse.json();
+assert(encryptedViewBody.apiKey === 'ExistingEncryptedApiKey12345', 'Encrypted API key was not decrypted for display');
+assert(encryptedView.state.userWrites === 0, 'Encrypted API key view unexpectedly rewrote the user');
 
 const rotate = createDb('ExistingReadableApiKey1234567');
 const rotateResponse = await handleRotateApiKey(request(), env(rotate.db), 'user-1');
 const rotateBody = await rotateResponse.json();
 assert(rotateResponse.status === 200, 'API key rotation failed');
 assert(rotateBody.apiKey !== 'ExistingReadableApiKey1234567', 'Rotation returned the old API key');
-assert(rotate.state.user.api_key === rotateBody.apiKey, 'Rotation did not persist the returned API key');
+assert(isStoredApiKeyEncrypted(rotate.state.user.api_key), 'Rotation did not persist an encrypted API key');
 assert(rotate.state.user.security_stamp === 'security-stamp-original', 'Rotation changed securityStamp');
 assert(rotate.state.refreshDeletes === 0, 'Rotation revoked unrelated refresh tokens');
-assert(!(await verifyApiKey('ExistingReadableApiKey1234567', rotate.state.user.api_key)), 'Old API key still authenticates');
-assert(await verifyApiKey(rotateBody.apiKey, rotate.state.user.api_key), 'Rotated API key does not authenticate');
+assert(!(await verifyApiKey('ExistingReadableApiKey1234567', rotate.state.user.api_key, jwtSecret, 'user-1')), 'Old API key still authenticates');
+assert(await verifyApiKey(rotateBody.apiKey, rotate.state.user.api_key, jwtSecret, 'user-1'), 'Rotated API key does not authenticate');
 
 const legacyPlain = 'LegacyHashedApiKey123456789';
 const legacy = createDb(await hashApiKey(legacyPlain));

@@ -20,11 +20,16 @@ import {
   importAndAuditRemoteBackupFile,
 } from '../handlers/backup';
 import { isSafeBackupAttachmentBlobName, verifyBackupArchiveFileNameChecksum } from '../services/backup-archive';
+import { MAX_ENCRYPTED_BACKUP_ARCHIVE_BYTES } from '../../shared/backup-encryption';
+import { LIMITS } from '../config/limits';
+import { readBoundedResponseBytes } from '../utils/bounded-response';
 import { zipSync } from 'fflate';
 
 const BACKUP_JOB_STATE_KEY = 'backup.job.state.v1';
 const BACKUP_JOB_LEASE_MS = 10 * 60 * 1000;
 const BACKUP_JOB_HEARTBEAT_MS = 30 * 1000;
+const MAX_REMOTE_ATTACHMENT_BATCH_BYTES = 32 * 1024 * 1024;
+const MAX_REMOTE_ATTACHMENT_CHUNK_ITEMS = 40;
 
 interface BackupJobState {
   token: string;
@@ -312,7 +317,9 @@ export class BackupTransferRunner {
         targetDeviceIdentifier
       );
 
-      const remoteFile = await downloadRemoteBackupFile(destination, path);
+      const remoteFile = await downloadRemoteBackupFile(destination, path, {
+        maxBytes: MAX_ENCRYPTED_BACKUP_ARCHIVE_BYTES,
+      });
       const checksumOk = await verifyBackupArchiveFileNameChecksum(remoteFile.bytes, remoteFile.fileName || path);
       if (!checksumOk && !body.allowChecksumMismatch) {
         return badRequest('Remote backup file checksum does not match its filename');
@@ -375,7 +382,9 @@ export class BackupTransferRunner {
       if (!body?.destination || !isSafeBackupAttachmentBlobName(blobName)) {
         return badRequest('Remote attachment download payload is invalid');
       }
-      const file = await downloadRemoteBackupFile(body.destination, `attachments/${blobName}`).catch(() => null);
+      const file = await downloadRemoteBackupFile(body.destination, `attachments/${blobName}`, {
+        maxBytes: LIMITS.attachment.maxFileSizeBytes,
+      }).catch(() => null);
       if (!file) {
         return badRequest('Remote attachment not found', 404);
       }
@@ -407,10 +416,24 @@ export class BackupTransferRunner {
       const encoder = new TextEncoder();
       const entries: Array<{ blobName: string; path: string }> = [];
       const files: Record<string, Uint8Array> = {};
+      let totalBytes = 0;
       for (let i = 0; i < blobNames.length; i += 1) {
         const blobName = blobNames[i];
-        const file = await downloadRemoteBackupFile(body.destination, `attachments/${blobName}`).catch(() => null);
-        if (!file) continue;
+        const remainingBytes = MAX_REMOTE_ATTACHMENT_BATCH_BYTES - totalBytes;
+        if (remainingBytes <= 0) {
+          return badRequest('Remote attachment batch is too large', 413);
+        }
+        let file: Awaited<ReturnType<typeof downloadRemoteBackupFile>>;
+        try {
+          file = await downloadRemoteBackupFile(body.destination, `attachments/${blobName}`, {
+            maxBytes: remainingBytes,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message.toLowerCase() : '';
+          if (message.includes('404') || message.includes('not found')) continue;
+          return badRequest('Remote attachment batch is too large', 413);
+        }
+        totalBytes += file.bytes.byteLength;
         const path = `files/${i}.bin`;
         entries.push({ blobName, path });
         files[path] = file.bytes;
@@ -437,7 +460,12 @@ export class BackupTransferRunner {
       return badRequest('Attachment chunk payload is invalid');
     }
 
-    if (!body?.destination || !Array.isArray(body.attachments)) {
+    if (
+      !body?.destination
+      || !Array.isArray(body.attachments)
+      || body.attachments.length === 0
+      || body.attachments.length > MAX_REMOTE_ATTACHMENT_CHUNK_ITEMS
+    ) {
       return badRequest('Attachment chunk payload is invalid');
     }
 
@@ -454,8 +482,20 @@ export class BackupTransferRunner {
       if (!object) {
         return badRequest(`Attachment blob missing for ${blobName}`, 409);
       }
+      if (object.size < 0 || object.size > LIMITS.attachment.maxFileSizeBytes) {
+        return badRequest('Attachment blob is too large', 413);
+      }
+      if (!object.body && object.size > 0) {
+        return badRequest(`Attachment blob missing for ${blobName}`, 409);
+      }
 
-      const bytes = new Uint8Array(await new Response(object.body).arrayBuffer());
+      const bytes = await readBoundedResponseBytes(
+        new Response(object.body, {
+          headers: object.size > 0 ? { 'Content-Length': String(object.size) } : undefined,
+        }),
+        LIMITS.attachment.maxFileSizeBytes,
+        'Attachment blob'
+      );
       await remoteSession.putFile(`attachments/${blobName}`, bytes, {
         contentType: object.contentType,
       });

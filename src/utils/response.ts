@@ -8,6 +8,7 @@ import {
 } from './origins';
 
 const CORS_METHODS = 'GET, POST, PUT, DELETE, PATCH, OPTIONS';
+const PWNED_PASSWORDS_ORIGIN = 'https://api.pwnedpasswords.com';
 const DEFAULT_CORS_HEADERS = [
   'Content-Type',
   'Authorization',
@@ -87,6 +88,40 @@ function buildCorsHeaders(request: Request, env: Env): Record<string, string> {
   return headers;
 }
 
+function buildWebVaultContentSecurityPolicy(request: Request): string {
+  const url = new URL(request.url);
+  const webSocketOrigin = `${url.protocol === 'https:' ? 'wss:' : 'ws:'}//${url.host}`;
+  return [
+    "default-src 'self'",
+    "base-uri 'none'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "frame-src 'none'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "media-src 'self' blob:",
+    `connect-src 'self' ${webSocketOrigin} ${PWNED_PASSWORDS_ORIGIN}`,
+    "worker-src 'self' blob:",
+    "manifest-src 'self'",
+    "form-action 'self'",
+  ].join('; ');
+}
+
+function isSensitiveResponse(request: Request, response: Response): boolean {
+  const pathname = new URL(request.url).pathname;
+  const contentType = String(response.headers.get('Content-Type') || '').toLowerCase();
+  return (
+    request.headers.has('Authorization')
+    || contentType.includes('text/html')
+    || pathname.startsWith('/api/')
+    || pathname.startsWith('/identity/')
+    || pathname.startsWith('/notifications/')
+    || pathname.startsWith('/admin/')
+  );
+}
+
 export function applyCors(
   request: Request,
   response: Response,
@@ -105,7 +140,11 @@ export function applyCors(
   }
   // Security headers applied to every response.
   headers.set('X-Content-Type-Options', 'nosniff');
-  headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  headers.set('Referrer-Policy', 'no-referrer');
+  headers.set('X-Permitted-Cross-Domain-Policies', 'none');
+  if (new URL(request.url).protocol === 'https:') {
+    headers.set('Strict-Transport-Security', 'max-age=31536000');
+  }
   const isWebAuthnFrameConnector = new URL(request.url).pathname === '/webauthn-connector.html';
   if (isWebAuthnFrameConnector) {
     // Official desktop and browser clients render this exact endpoint inside a
@@ -118,9 +157,13 @@ export function applyCors(
     );
   } else {
     headers.set('X-Frame-Options', 'DENY');
+    headers.set('Permissions-Policy', 'camera=(self), geolocation=(), microphone=(), payment=(), usb=()');
   }
   if (!isWebAuthnFrameConnector && !headers.has('Content-Security-Policy')) {
-    headers.set('Content-Security-Policy', "frame-ancestors 'none'; img-src 'self' data:");
+    headers.set('Content-Security-Policy', buildWebVaultContentSecurityPolicy(request));
+  }
+  if (isSensitiveResponse(request, response) && !headers.has('Cache-Control')) {
+    headers.set('Cache-Control', 'no-store');
   }
   return new Response(response.body, {
     status: response.status,

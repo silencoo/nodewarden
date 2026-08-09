@@ -1,4 +1,4 @@
-import { Wifi, WifiOff } from 'lucide-preact';
+import { WifiOff } from 'lucide-preact';
 import { useEffect, useState } from 'preact/hooks';
 import { t } from '@/lib/i18n';
 import {
@@ -12,15 +12,8 @@ import {
 
 const STATUS_CHECK_INTERVAL_MS = 30_000;
 
-function statusLabel(status: NetworkStatus): string {
-  if (status === 'online') return t('txt_online');
-  return t('txt_offline');
-}
-
 export default function NetworkStatusBadge() {
   const [status, setStatus] = useState<NetworkStatus>(getCurrentNetworkStatus);
-  const label = statusLabel(status);
-  const Icon = status === 'online' ? Wifi : WifiOff;
 
   useEffect(() => {
     let timer = 0;
@@ -67,6 +60,10 @@ export default function NetworkStatusBadge() {
     };
   }, []);
 
+  if (status !== 'offline') return null;
+
+  const label = t('txt_offline');
+
   return (
     <span
       className={`network-status-badge ${status}`}
@@ -74,7 +71,7 @@ export default function NetworkStatusBadge() {
       aria-label={label}
       aria-live="polite"
     >
-      <Icon size={14} aria-hidden="true" />
+      <WifiOff size={14} aria-hidden="true" />
       <span className="network-status-label">{label}</span>
     </span>
   );

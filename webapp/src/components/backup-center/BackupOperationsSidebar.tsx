@@ -12,12 +12,18 @@ interface BackupOperationsSidebarProps {
   exporting: boolean;
   importing: boolean;
   exportIncludeAttachments: boolean;
+  exportEncryptionEnabled: boolean;
+  exportEncryptionPassword: string;
+  exportEncryptionPasswordConfirmation: string;
   selectedProviderId: string | null;
   recommendedWebDavProviders: RecommendedProvider[];
   recommendedS3Providers: RecommendedProvider[];
   onExport: () => void;
   onImport: () => void;
   onExportIncludeAttachmentsChange: (checked: boolean) => void;
+  onExportEncryptionEnabledChange: (checked: boolean) => void;
+  onExportEncryptionPasswordChange: (value: string) => void;
+  onExportEncryptionPasswordConfirmationChange: (value: string) => void;
   onSelectProvider: (providerId: string) => void;
 }
 
@@ -61,6 +67,42 @@ export function BackupOperationsSidebar(props: BackupOperationsSidebarProps) {
           showHelp={false}
           onChange={props.onExportIncludeAttachmentsChange}
         />
+        <label className="backup-option-label">
+          <input
+            type="checkbox"
+            checked={props.exportEncryptionEnabled}
+            disabled={props.disableWhileBusy}
+            onInput={(event) => props.onExportEncryptionEnabledChange((event.currentTarget as HTMLInputElement).checked)}
+          />
+          <span>{t('txt_backup_encrypt_export')}</span>
+        </label>
+        {props.exportEncryptionEnabled ? (
+          <div className="backup-encryption-fields">
+            <label className="field">
+              <span>{t('txt_backup_encryption_password')}</span>
+              <input
+                className="input"
+                type="password"
+                autoComplete="new-password"
+                value={props.exportEncryptionPassword}
+                disabled={props.disableWhileBusy}
+                onInput={(event) => props.onExportEncryptionPasswordChange((event.currentTarget as HTMLInputElement).value)}
+              />
+            </label>
+            <label className="field">
+              <span>{t('txt_backup_encryption_password_confirm')}</span>
+              <input
+                className="input"
+                type="password"
+                autoComplete="new-password"
+                value={props.exportEncryptionPasswordConfirmation}
+                disabled={props.disableWhileBusy}
+                onInput={(event) => props.onExportEncryptionPasswordConfirmationChange((event.currentTarget as HTMLInputElement).value)}
+              />
+            </label>
+            <div className="field-help">{t('txt_backup_encryption_password_help')}</div>
+          </div>
+        ) : null}
         <button type="button" className="btn btn-secondary" disabled={props.disableWhileBusy} onClick={props.onImport}>
           <FileUp size={14} className="btn-icon" />
           {props.importing ? t('txt_backup_restoring') : t('txt_backup_import')}

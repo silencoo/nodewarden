@@ -348,7 +348,7 @@ const fi: Record<string, string> = {
   "txt_backup_error_s3_delete_failed_status": "S3-poisto epäonnistui: HTTP {status}.",
   "txt_backup_error_s3_download_failed_status": "S3-lataus epäonnistui: HTTP {status}.",
   "txt_backup_error_s3_endpoint_required": "S3-päätepiste vaaditaan.",
-  "txt_backup_error_s3_endpoint_protocol": "S3-päätepisteen on alettava http:// tai https://.",
+  "txt_backup_error_s3_endpoint_protocol": "S3-päätepisteen on käytettävä https://-osoitetta.",
   "txt_backup_error_s3_existence_check_failed_status": "S3-olemassaolon tarkistus epäonnistui: HTTP {status}.",
   "txt_backup_error_s3_listing_failed_status": "S3-listaus epäonnistui: HTTP {status}.",
   "txt_backup_error_s3_secret_key_required": "S3-salainen avain vaaditaan.",
@@ -373,7 +373,7 @@ const fi: Record<string, string> = {
   "txt_backup_error_webdav_path_too_deep": "WebDAV-etävarmuuskopion polku on liian syvä turvallista liitteiden eräajoa varten.",
   "txt_backup_error_webdav_upload_failed_status": "WebDAV-lähetys epäonnistui: HTTP {status}.",
   "txt_backup_error_webdav_url_required": "WebDAV-palvelimen URL-osoite vaaditaan.",
-  "txt_backup_error_webdav_url_protocol": "WebDAV-palvelimen URL-osoitteen on alettava http:// tai https://.",
+  "txt_backup_error_webdav_url_protocol": "WebDAV-palvelimen URL-osoitteen on käytettävä https://-osoitetta.",
   "txt_backup_error_webdav_username_required": "WebDAV-käyttäjänimi vaaditaan.",
   "txt_backup_destination": "Varmuuskopiokohde",
   "txt_backup_protocol_webdav": "WebDAV",
@@ -1463,5 +1463,21 @@ Object.assign(fi, {
 Object.assign(fi, { "txt_password_security_last_checked": "Tarkistettu viimeksi: {value}" });
 Object.assign(fi, { "txt_no_password_risks_in_filter": "Tässä luokassa ei ole salasanojen riskejä" });
 Object.assign(fi, { "txt_password_security_show_all": "Show all", "txt_password_security_hide_all": "Hide all", "txt_password_security_jump": "Go to item", "txt_password_security_exposed_short": "Exposed {count} times", "txt_password_security_weak_short": "Weak password", "txt_password_security_reused_short": "Reused" });
+
+Object.assign(fi, {
+  "txt_backup_encrypt_export": "Salaa vietävä ZIP",
+  "txt_backup_encrypt_remote": "Salaa varmuuskopio ennen etälatausta",
+  "txt_backup_encryption_password": "Varmuuskopion salaus­salasana",
+  "txt_backup_encryption_password_confirm": "Vahvista varmuuskopion salasana",
+  "txt_backup_encryption_password_help": "Käyttää AES-256 ZIP -salausta. Säilytä salasana palvelimen ulkopuolella; sitä ei voi palauttaa.",
+  "txt_backup_remote_encryption_help": "Uudet etäarkistot salataan ennen latausta. Vanhoihin tarvitaan niiden luomishetken salasana.",
+  "txt_backup_remote_encryption_disabled_warning": "Tallennuspalvelu voi lukea varmuuskopion. Ota salaus käyttöön ennen tämän kohteen käyttöä.",
+  "txt_backup_encryption_password_invalid": "Käytä 12–1024 merkin varmuuskopiosalasanaa.",
+  "txt_backup_encryption_password_mismatch": "Varmuuskopiosalasanat eivät täsmää.",
+  "txt_backup_encryption_mixed_archive": "Varmuuskopio sisältää sekä salattuja että salaamattomia tiedostoja, eikä sitä voi palauttaa turvallisesti.",
+  "txt_backup_encryption_password_required": "Anna varmuuskopiotiedoston salasana.",
+  "txt_backup_file_password": "Varmuuskopiotiedoston salasana",
+  "txt_backup_file_password_help": "Tämä on ZIP-tiedoston salaukseen käytetty salasana, ei pääsalasanasi."
+});
 
 export default fi;

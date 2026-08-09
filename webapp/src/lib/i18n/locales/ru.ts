@@ -348,7 +348,7 @@ const ru: Record<string, string> = {
   "txt_backup_error_s3_delete_failed_status": "Удаление S3 не удалось: HTTP {status}.",
   "txt_backup_error_s3_download_failed_status": "Скачивание S3 не удалось: HTTP {status}.",
   "txt_backup_error_s3_endpoint_required": "Требуется endpoint S3.",
-  "txt_backup_error_s3_endpoint_protocol": "Endpoint S3 должен начинаться с http:// или https://.",
+  "txt_backup_error_s3_endpoint_protocol": "Конечная точка S3 должна использовать https://.",
   "txt_backup_error_s3_existence_check_failed_status": "Проверка существования S3 не удалась: HTTP {status}.",
   "txt_backup_error_s3_listing_failed_status": "Получение списка S3 не удалось: HTTP {status}.",
   "txt_backup_error_s3_secret_key_required": "Требуется секретный ключ S3.",
@@ -373,7 +373,7 @@ const ru: Record<string, string> = {
   "txt_backup_error_webdav_path_too_deep": "Удаленный путь WebDAV слишком глубокий для безопасной пакетной обработки вложений.",
   "txt_backup_error_webdav_upload_failed_status": "Загрузка WebDAV не удалась: HTTP {status}.",
   "txt_backup_error_webdav_url_required": "Требуется URL сервера WebDAV.",
-  "txt_backup_error_webdav_url_protocol": "URL WebDAV должен начинаться с http:// или https://.",
+  "txt_backup_error_webdav_url_protocol": "URL WebDAV должен использовать https://.",
   "txt_backup_error_webdav_username_required": "Требуется имя пользователя WebDAV.",
   "txt_backup_destination": "Место назначения резервного копирования",
   "txt_backup_protocol_webdav": "WebDAV",
@@ -1463,5 +1463,21 @@ Object.assign(ru, {
 Object.assign(ru, { "txt_password_security_last_checked": "Последняя проверка: {value}" });
 Object.assign(ru, { "txt_no_password_risks_in_filter": "В этой категории нет рисков для паролей" });
 Object.assign(ru, { "txt_password_security_show_all": "Show all", "txt_password_security_hide_all": "Hide all", "txt_password_security_jump": "Go to item", "txt_password_security_exposed_short": "Exposed {count} times", "txt_password_security_weak_short": "Weak password", "txt_password_security_reused_short": "Reused" });
+
+Object.assign(ru, {
+  "txt_backup_encrypt_export": "Зашифровать экспортируемый ZIP",
+  "txt_backup_encrypt_remote": "Шифровать резервную копию перед отправкой",
+  "txt_backup_encryption_password": "Пароль шифрования резервной копии",
+  "txt_backup_encryption_password_confirm": "Подтвердите пароль резервной копии",
+  "txt_backup_encryption_password_help": "Используется шифрование ZIP AES-256. Храните пароль вне сервера: восстановить его невозможно.",
+  "txt_backup_remote_encryption_help": "Новые удалённые архивы шифруются до отправки. Для существующих нужен пароль, использованный при их создании.",
+  "txt_backup_remote_encryption_disabled_warning": "Провайдер хранилища сможет прочитать резервную копию. Включите шифрование перед использованием этого назначения.",
+  "txt_backup_encryption_password_invalid": "Используйте пароль резервной копии длиной от 12 до 1024 символов.",
+  "txt_backup_encryption_password_mismatch": "Пароли резервной копии не совпадают.",
+  "txt_backup_encryption_mixed_archive": "В резервной копии смешаны зашифрованные и незашифрованные файлы; безопасное восстановление невозможно.",
+  "txt_backup_encryption_password_required": "Введите пароль файла резервной копии.",
+  "txt_backup_file_password": "Пароль файла резервной копии",
+  "txt_backup_file_password_help": "Это пароль, которым был зашифрован ZIP, а не ваш мастер-пароль."
+});
 
 export default ru;
