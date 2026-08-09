@@ -7,7 +7,7 @@ import {
 } from './backup-config';
 import { LIMITS } from '../config/limits';
 import { readBoundedResponseBytes, readBoundedResponseText } from '../utils/bounded-response';
-import { rejectRedirectResponse } from '../utils/redirect-response';
+import { isRedirectResponse } from '../utils/redirect-response';
 
 const MAX_REMOTE_BACKUP_DOWNLOAD_BYTES = Math.max(
   LIMITS.attachment.maxFileSizeBytes,
@@ -16,6 +16,8 @@ const MAX_REMOTE_BACKUP_DOWNLOAD_BYTES = Math.max(
 const MAX_REMOTE_LIST_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_REMOTE_LIST_ITEMS = 10_000;
 const MAX_REMOTE_S3_LIST_PAGES = 20;
+const MAX_REMOTE_BACKUP_REDIRECTS = 3;
+const SAFE_REMOTE_BACKUP_REDIRECT_STATUSES = new Set([301, 302, 307, 308]);
 
 export interface BackupUploadResult {
   provider: BackupDestinationType;
@@ -72,16 +74,91 @@ function isBackupArchiveName(name: string): boolean {
   return /\.zip$/i.test(String(name || '').trim());
 }
 
-async function fetchBackupEndpoint(input: RequestInfo | URL, init: RequestInit): Promise<Response> {
-  const response = await fetch(input, {
-    ...init,
-    // Backup requests carry provider credentials and vault data. Never follow a
-    // redirect because Fetch can forward authentication headers across origins.
-    // Cloudflare Workers does not implement redirect="error", so use manual
-    // handling and reject every 3xx response explicitly.
-    redirect: 'manual',
-  });
-  return rejectRedirectResponse(response, 'Remote backup endpoint');
+type BackupRequestInitFactory = (url: URL) => RequestInit | Promise<RequestInit>;
+
+async function cancelResponseBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // The redirect response will not be consumed even if cancellation fails.
+  }
+}
+
+function resolveBackupRedirectTarget(response: Response, currentUrl: URL, allowedOrigin: string): URL {
+  if (!SAFE_REMOTE_BACKUP_REDIRECT_STATUSES.has(response.status)) {
+    throw new Error(`Remote backup endpoint returned unsupported redirect status ${response.status}`);
+  }
+
+  const location = response.headers.get('Location');
+  if (!location) {
+    throw new Error('Remote backup endpoint redirected without a Location header');
+  }
+
+  let target: URL;
+  try {
+    target = new URL(location, currentUrl);
+  } catch {
+    throw new Error('Remote backup endpoint returned an invalid redirect target');
+  }
+  target.hash = '';
+
+  if (
+    target.protocol !== 'https:'
+    || target.origin !== allowedOrigin
+    || target.username
+    || target.password
+  ) {
+    throw new Error('Remote backup endpoint redirected to a different origin; configure the final HTTPS endpoint instead');
+  }
+
+  return target;
+}
+
+async function fetchBackupEndpoint(
+  input: string | URL,
+  initOrFactory: RequestInit | BackupRequestInitFactory
+): Promise<Response> {
+  const initialUrl = new URL(input.toString());
+  const allowedOrigin = initialUrl.origin;
+  const visitedUrls = new Set<string>();
+  let currentUrl = initialUrl;
+  let redirectCount = 0;
+
+  while (true) {
+    const currentKey = currentUrl.toString();
+    if (visitedUrls.has(currentKey)) {
+      throw new Error('Remote backup endpoint returned a redirect loop');
+    }
+    visitedUrls.add(currentKey);
+
+    const requestInit = typeof initOrFactory === 'function'
+      ? await initOrFactory(new URL(currentUrl))
+      : initOrFactory;
+    const response = await fetch(currentUrl, {
+      ...requestInit,
+      // Cloudflare forwards every header when redirect="follow", even across
+      // origins. Keep manual handling so credentials only reach the configured
+      // HTTPS origin and preserve WebDAV methods across canonical redirects.
+      redirect: 'manual',
+    });
+    if (!isRedirectResponse(response)) return response;
+
+    if (redirectCount >= MAX_REMOTE_BACKUP_REDIRECTS) {
+      await cancelResponseBody(response);
+      throw new Error('Remote backup endpoint redirected too many times');
+    }
+
+    let target: URL;
+    try {
+      target = resolveBackupRedirectTarget(response, currentUrl, allowedOrigin);
+    } catch (error) {
+      await cancelResponseBody(response);
+      throw error;
+    }
+    await cancelResponseBody(response);
+    currentUrl = target;
+    redirectCount += 1;
+  }
 }
 
 function encodePathSegments(path: string): string {
@@ -576,32 +653,34 @@ async function signedS3Request(
 ): Promise<Response> {
   const payloadHashHex = await sha256Hex(body || new Uint8Array());
   const amzDate = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '');
-  const headers: Record<string, string> = {
-    host: url.host,
-    'x-amz-content-sha256': payloadHashHex,
-    'x-amz-date': amzDate,
-  };
-  if (method === 'PUT') headers['content-type'] = contentType || 'application/octet-stream';
+  return fetchBackupEndpoint(url, async (requestUrl) => {
+    const headers: Record<string, string> = {
+      host: requestUrl.host,
+      'x-amz-content-sha256': payloadHashHex,
+      'x-amz-date': amzDate,
+    };
+    if (method === 'PUT') headers['content-type'] = contentType || 'application/octet-stream';
 
-  const authorization = await buildAwsV4Authorization(
-    method,
-    url,
-    headers,
-    payloadHashHex,
-    config.accessKeyId,
-    config.secretAccessKey,
-    config.region || 'auto'
-  );
+    const authorization = await buildAwsV4Authorization(
+      method,
+      requestUrl,
+      headers,
+      payloadHashHex,
+      config.accessKeyId,
+      config.secretAccessKey,
+      config.region || 'auto'
+    );
 
-  return fetchBackupEndpoint(url, {
-    method,
-    headers: {
-      Authorization: authorization,
-      'X-Amz-Content-Sha256': headers['x-amz-content-sha256'],
-      'X-Amz-Date': headers['x-amz-date'],
-      ...(method === 'PUT' ? { 'Content-Type': headers['content-type'] } : {}),
-    },
-    body,
+    return {
+      method,
+      headers: {
+        Authorization: authorization,
+        'X-Amz-Content-Sha256': headers['x-amz-content-sha256'],
+        'X-Amz-Date': headers['x-amz-date'],
+        ...(method === 'PUT' ? { 'Content-Type': headers['content-type'] } : {}),
+      },
+      body,
+    };
   });
 }
 

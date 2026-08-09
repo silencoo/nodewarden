@@ -72,7 +72,7 @@ test('WebDAV listings are parsed from bounded, non-redirected responses', async 
   }
 });
 
-test('S3 listings use fixed XML fields and reject redirects', async () => {
+test('S3 listings use fixed XML fields with manual redirect handling', async () => {
   const originalFetch = globalThis.fetch;
   let redirect: RequestRedirect | undefined;
   globalThis.fetch = async (_input, init) => {
@@ -117,10 +117,50 @@ test('remote downloads stop before buffering a declared oversized body', async (
   }
 });
 
-test('manual redirect responses are rejected before credentials can be forwarded', async () => {
+test('same-origin WebDAV redirects preserve the method and credentials', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ url: string; method: string | undefined; authorization: string | null; redirect: RequestRedirect | undefined }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = input.toString();
+    requests.push({
+      url,
+      method: init?.method,
+      authorization: new Headers(init?.headers).get('Authorization'),
+      redirect: init?.redirect,
+    });
+    if (requests.length === 1) {
+      return new Response(null, {
+        status: 301,
+        headers: { Location: '/dav/nodewarden/' },
+      });
+    }
+    const xml = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"></d:multistatus>`;
+    return new Response(xml, {
+      status: 207,
+      headers: { 'Content-Length': String(new TextEncoder().encode(xml).byteLength) },
+    });
+  };
+  try {
+    const listing = await listRemoteBackupEntries(webDavDestination(), '');
+    assert.equal(listing.items.length, 0);
+    assert.equal(requests.length, 2);
+    assert.deepEqual(requests.map((request) => [request.url, request.method, request.redirect]), [
+      ['https://backup.example.test/dav/nodewarden', 'PROPFIND', 'manual'],
+      ['https://backup.example.test/dav/nodewarden/', 'PROPFIND', 'manual'],
+    ]);
+    assert.match(requests[0].authorization || '', /^Basic /);
+    assert.equal(requests[1].authorization, requests[0].authorization);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('cross-origin redirect responses are rejected before credentials can be forwarded', async () => {
   const originalFetch = globalThis.fetch;
   let redirect: RequestRedirect | undefined;
+  let requestCount = 0;
   globalThis.fetch = async (_input, init) => {
+    requestCount += 1;
     redirect = init?.redirect;
     return new Response(null, {
       status: 302,
@@ -130,9 +170,61 @@ test('manual redirect responses are rejected before credentials can be forwarded
   try {
     await assert.rejects(
       () => listRemoteBackupEntries(webDavDestination(), ''),
-      /redirects are not allowed/
+      /different origin/
     );
     assert.equal(redirect, 'manual');
+    assert.equal(requestCount, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('redirect loops are rejected with a bounded number of requests', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestCount = 0;
+  globalThis.fetch = async () => {
+    requestCount += 1;
+    return new Response(null, {
+      status: 301,
+      headers: { Location: requestCount % 2 === 1 ? '/dav/nodewarden/' : '/dav/nodewarden' },
+    });
+  };
+  try {
+    await assert.rejects(
+      () => listRemoteBackupEntries(webDavDestination(), ''),
+      /redirect loop/
+    );
+    assert.equal(requestCount, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('same-origin S3 redirects are re-signed for the redirected path', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ url: string; authorization: string | null }> = [];
+  globalThis.fetch = async (input, init) => {
+    requests.push({
+      url: input.toString(),
+      authorization: new Headers(init?.headers).get('Authorization'),
+    });
+    if (requests.length === 1) {
+      return new Response(null, {
+        status: 307,
+        headers: { Location: '/vault-backups/?list-type=2&delimiter=%2F' },
+      });
+    }
+    const xml = '<ListBucketResult></ListBucketResult>';
+    return new Response(xml, {
+      status: 200,
+      headers: { 'Content-Length': String(new TextEncoder().encode(xml).byteLength) },
+    });
+  };
+  try {
+    const listing = await listRemoteBackupEntries(s3Destination(), '');
+    assert.equal(listing.items.length, 0);
+    assert.equal(requests.length, 2);
+    assert.notEqual(requests[0].authorization, requests[1].authorization);
   } finally {
     globalThis.fetch = originalFetch;
   }
