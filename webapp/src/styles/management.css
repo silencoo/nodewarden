@@ -30,6 +30,10 @@
   border-color: var(--line);
 }
 
+.backup-detail-panel {
+  container-type: inline-size;
+}
+
 .backup-actions-stack {
   @apply grid gap-2.5;
 }
@@ -389,7 +393,7 @@
 
 .backup-browser-head {
   @apply grid items-center gap-3 px-3 py-2 text-[11px] font-bold uppercase tracking-[0.08em];
-  grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.75fr) minmax(92px, 0.4fr) minmax(220px, auto);
+  grid-template-columns: minmax(180px, 1fr) minmax(130px, 0.75fr) minmax(80px, 0.4fr) minmax(0, auto);
   border-bottom: 1px solid var(--line);
   color: #64748b;
   background: #f8fafc;
@@ -416,7 +420,7 @@
 
 .backup-browser-row {
   @apply grid items-center gap-3 px-3 py-2;
-  grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.75fr) minmax(92px, 0.4fr) minmax(220px, auto);
+  grid-template-columns: minmax(180px, 1fr) minmax(130px, 0.75fr) minmax(80px, 0.4fr) minmax(0, auto);
   min-height: 48px;
 }
 
@@ -446,7 +450,42 @@
 
 .backup-browser-actions {
   justify-content: flex-end;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.backup-browser-actions .btn {
+  min-width: 0;
+  max-width: 100%;
+}
+
+@container (max-width: 760px) {
+  .backup-browser-head {
+    display: none;
+  }
+
+  .backup-browser-row {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .backup-browser-meta {
+    text-align: left;
+  }
+
+  .backup-browser-actions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .backup-browser-actions .btn {
+    flex: 1 1 120px;
+    width: auto;
+    height: auto;
+    min-height: 36px;
+    padding-block: 6px;
+    white-space: normal;
+  }
 }
 
 .backup-browser-empty {
